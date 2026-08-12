@@ -51,13 +51,13 @@ ccse profiles                      # 列已有 profile
 - `agent.slot = "name"`：`agent` 选 adapter，`slot` 选该 adapter 内字段。
 - profile 里省略的槽位**不动** → 可只切部分 agent。
 
-## adapter 对照（16 个）
+## adapter 对照（17 个）
 
 结构化配置文件：
 
 | adapter | 配置文件 | 格式 | `--model` 改的字段 |
 |---|---|---|---|
-| `claude` | `~/.claude/settings.json` | JSON | `env.ANTHROPIC_MODEL` |
+| `claude` | `~/.claude/settings.json` | JSON | `env.ANTHROPIC_MODEL`（自动带 `[1M]` 后缀） |
 | `codex` | `~/.codex/config.toml` | TOML | 顶层 `model` |
 | `opencode` | `~/.config/opencode/opencode.json` | JSON | 顶层 `model` |
 | `gemini` | `~/.gemini/.env` | env | `GEMINI_MODEL` |
@@ -71,6 +71,7 @@ ccse profiles                      # 列已有 profile
 | `grok` | `~/.grok/config.toml` | TOML | `[models].default` |
 | `forge` | `~/.forge/.forge.toml` | TOML | `[session].model_id` |
 | `hermes` | `~/.hermes/config.yaml` | YAML | `model.default` |
+| `snow` | `~/.snow/config.json` | JSON | `snowcfg.advancedModel` (+`basicModel` 可手配) |
 
 env / shell-rc（模型名在 `~/.zshrc` 的 `export` 行）：
 
@@ -80,6 +81,10 @@ env / shell-rc（模型名在 `~/.zshrc` 的 `export` 行）：
 | `copaw` | `COPAW_MODEL_NAME` | CoPAW 走 NewAPI fallback 的稳定引用 |
 
 envrc 适配器只改它声明的那个 `export VAR=...` 行（单引号转义，`glm-5.2[1M]` 这类含特殊字符的名字也安全），rc 文件里其它内容一字不动；snapshot/undo 同样覆盖 `~/.zshrc`。
+
+### `[1M]` 后缀
+
+Claude Code 的模型名带聚合端特有的上下文窗口标记（`glm-5.2[1M]`、`qwen3.8-max[1M]`），其它 agent 不需要。`ccse --model "glm-5.2"` 对 claude 会自动补 `[1M]`（`glm-5.2[1M]`）；你显式写 `glm-5.2[1M]` 不会再叠加。手写 profile 的 `claude.model` 请带 `[1M]`。
 
 字段路径里支持 JSON-path 选择器：
 - `providers[id=newapi].model` — 按 `id` 找列表项
@@ -130,8 +135,8 @@ pipx/uv 装一个 CLI，stdlib(`argparse`/`tomllib`/`json`)为主；第三方只
 
 ## ROADMAP
 
-- [x] 14 adapter（claude/codex/opencode/gemini/qwen/cline + codebuddy/pi/openclaw/kilocode/reasonix/grok/forge/hermes）
-- [x] `--model NAME` 全量一键 + `--only`/`--exclude`
+- [x] 17 adapter（claude/codex/opencode/gemini/qwen/cline + codebuddy/pi/openclaw/kilocode/reasonix/grok/forge/hermes/snow + kimi/copaw envrc）
+- [x] `--model NAME` 全量一键 + `--only`/`--exclude` + 保前缀 + claude 自动 `[1M]`
 - [x] `apply`/`diff` 双模式 + profile 多槽位
 - [x] `genprofile` 快照成 profile
 - [x] `undo` / `history` / `snapshots` 撤回链

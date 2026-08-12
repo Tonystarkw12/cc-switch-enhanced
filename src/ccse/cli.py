@@ -155,12 +155,14 @@ def _apply_assignments(assignments: dict[str, str], *, dry: bool,
 def _model_assignments(name: str, only, exclude, keep_prefix: bool = True) -> dict[str, str]:
     """Build {primary_key: target} for every adapter in scope.
 
-    keep_prefix: if the current primary value carries a structural ``<prefix>/<model>``
-    route id (opencode ``newapi/...``, openclaw ``dmx/...``, forge/gemini
-    ``krill/...``) and the user passed a bare model name (no ``/``), keep that
-    adapter's own prefix so its upstream router still resolves. If the user
-    passed a name already containing ``/`` it is used verbatim (they know what
-    they want)."""
+    - keep_prefix: if the current primary value carries a structural
+      ``<prefix>/<model>`` route id (opencode ``newapi/...``, openclaw
+      ``dmx/...``, forge/gemini ``krill/...``) and the user passed a bare model
+      name (no ``/``), keep that adapter's own prefix so its upstream router
+      still resolves. A NAME already containing ``/`` is used verbatim.
+    - suffix: adapters that declare a ``suffix`` (e.g. claude needs ``[1M]``)
+      get it appended to bare names — that marker is aggregator-specific and
+      no other agent has it."""
     adapters = _filter_adapters(_load_adapters(), only, exclude)
     out: dict[str, str] = {}
     for a in adapters:
@@ -171,11 +173,13 @@ def _model_assignments(name: str, only, exclude, keep_prefix: bool = True) -> di
         if key not in slots:
             continue
         cur = slots[key].current
+        target = name
         if keep_prefix and "/" not in name and cur and "/" in cur:
-            prefix = cur.rsplit("/", 1)[0]
-            out[key] = f"{prefix}/{name}"
-        else:
-            out[key] = name
+            target = cur.rsplit("/", 1)[0] + "/" + name
+        suffix = getattr(a, "suffix", "") or ""
+        if suffix and not target.endswith(suffix):
+            target += suffix
+        out[key] = target
     return out
 
 

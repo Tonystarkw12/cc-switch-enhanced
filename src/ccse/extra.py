@@ -80,6 +80,15 @@ make_adapter(
     {"apiModelId": "providers[newapi].apiModelId"},
 )
 
+# Snow: ~/.snow/config.json — snowcfg.advancedModel (main model; snow falls
+# back to "gpt-5" when empty). basicModel is a secondary slot for --useBasicModel.
+make_adapter(
+    "snow", "Snow",
+    HOME / ".snow" / "config.json",
+    {"advancedModel": "snowcfg.advancedModel",
+     "basicModel": "snowcfg.basicModel"},
+)
+
 
 # ───────────────────────── TOML adapters ───────────────────────────────
 # All use tomlkit to preserve comments/formatting where possible.

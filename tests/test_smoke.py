@@ -18,7 +18,7 @@ def test_registry_loads_all_targets():
     ids = {a.id for a in all_adapters()}
     for expect in ("claude", "codex", "opencode", "gemini", "qwen", "cline",
                    "codebuddy", "pi", "openclaw", "kilocode", "reasonix",
-                   "grok", "forge", "hermes"):
+                   "grok", "forge", "hermes", "snow"):
         assert expect in ids, f"missing adapter {expect}"
 
 
@@ -161,7 +161,7 @@ def test_keep_prefix_logic():
     from ccse import cli as cli_mod
     # stand up fake adapters with known current primary values
     fake = {
-        "claude": ("claude.model", "glm-5.2[1M]"),     # bare
+        "claude": ("claude.model", "glm-5.2[1M]"),     # bare + [1M] suffix
         "opencode": ("opencode.model", "newapi/gpt-5.6-sol"),  # prefixed
         "gemini": ("gemini.model", "krill/gpt-5.6-terra"),     # prefixed
         "forge": ("forge.model", "krill/gpt-5.6-sol"),        # prefixed
@@ -169,22 +169,29 @@ def test_keep_prefix_logic():
     }
 
     class A:
-        def __init__(self, aid, key, cur, avail=True):
+        def __init__(self, aid, key, cur, avail=True, suffix=""):
             self.id, self.name, self.path = aid, aid, Path("/x")
             self.available, self.primary = avail, key
             self._cur = cur
+            self.suffix = suffix
         def slots(_self):
             from ccse.registry import Slot
             return [Slot(key=_self.primary, label=_self.primary, current=_self._cur)]
         def apply(_self, *a, **k): return []
 
-    fakes = [A(k, k, v) for k, v in fake.values()]
+    fakes = [
+        A("claude", "claude.model", "glm-5.2[1M]", suffix="[1M]"),
+        A("opencode", "opencode.model", "newapi/gpt-5.6-sol"),
+        A("gemini", "gemini.model", "krill/gpt-5.6-terra"),
+        A("forge", "forge.model", "krill/gpt-5.6-sol"),
+        A("openclaw", "openclaw.primary", "dmx/gpt-5.6-terra"),
+    ]
     cli_mod._load_adapters = lambda: fakes  # type: ignore
     cli_mod._filter_adapters = lambda ads, o, e: ads  # type: ignore
 
-    # bare name -> prefixes preserved
+    # bare name -> prefixes preserved, claude gets [1M] appended
     got = cli_mod._model_assignments("glm-5.2", None, None, keep_prefix=True)
-    assert got["claude.model"] == "glm-5.2"
+    assert got["claude.model"] == "glm-5.2[1M]"
     assert got["opencode.model"] == "newapi/glm-5.2"
     assert got["gemini.model"] == "krill/glm-5.2"
     assert got["forge.model"] == "krill/glm-5.2"
@@ -193,11 +200,39 @@ def test_keep_prefix_logic():
     # raw mode
     got2 = cli_mod._model_assignments("glm-5.2", None, None, keep_prefix=False)
     assert got2["opencode.model"] == "glm-5.2"
+    assert got2["claude.model"] == "glm-5.2[1M]"  # suffix still applied
 
     # full name passed -> used verbatim even with keep_prefix
     got3 = cli_mod._model_assignments("proxy/glm-5.2", None, None, keep_prefix=True)
     assert got3["opencode.model"] == "proxy/glm-5.2"
-    assert got3["claude.model"] == "proxy/glm-5.2"
+    assert got3["claude.model"] == "proxy/glm-5.2[1M]"
+
+    # name already carrying [1M] -> not doubled
+    got4 = cli_mod._model_assignments("glm-5.2[1M]", None, None, keep_prefix=True)
+    assert got4["claude.model"] == "glm-5.2[1M]"
+
+
+def test_snow_adapter(tmp_path, monkeypatch):
+    """Snow ~/.snow/config.json snowcfg.advancedModel (and basicModel slot)."""
+    from ccse import extra as extra_mod
+    cfg = tmp_path / "config.json"
+    cfg.write_text(json.dumps({"snowcfg": {"baseUrl": "http://x/v1",
+                                           "advancedModel": "",
+                                           "basicModel": ""}}))
+    extra_mod.make_adapter(
+        "snow_test", "Snow", cfg,
+        {"advancedModel": "snowcfg.advancedModel",
+         "basicModel": "snowcfg.basicModel"})
+    from ccse.registry import REGISTRY
+    cls = REGISTRY["snow_test"]
+    a = cls()
+    assert a.primary == "snow_test.advancedModel"
+    assert a.slots()[0].current is None  # empty string -> None (via get_in_path)
+    diffs = a.apply({"snow_test.advancedModel": "glm-5.2"}, dry=False)
+    assert diffs
+    after = json.loads(cfg.read_text())
+    assert after["snowcfg"]["advancedModel"] == "glm-5.2"
+    assert after["snowcfg"]["basicModel"] == ""
 
 
 if __name__ == "__main__":

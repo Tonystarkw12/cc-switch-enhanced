@@ -28,6 +28,8 @@ class ClaudeAdapter:
     id = "claude"
     name = "Claude Code"
     primary = "claude.model"
+    suffix = "[1M]"  # Claude Code model names carry a context-window marker the
+    #                aggregator needs (e.g. "glm-5.2[1M]"); other agents don't.
     path = config.HOME / ".claude" / "settings.json"
 
     @property

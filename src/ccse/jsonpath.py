@@ -162,6 +162,8 @@ def make_adapter(adapter_id: str, name: str, path: Path, slot_paths: dict[str, s
         for label, p in paths.items():
             rp = resolve_list_path(d, p)
             cur = get_in_path(d, rp)
+            if cur is None or cur == "":
+                cur = None  # empty = unset (e.g. snow advancedModel="")
             out.append(Slot(key=f"{adapter_id}.{label}", label=label, current=cur))
         return out
 
