@@ -12,7 +12,7 @@ description: >
 
 # ccse — one-line model switch across coding agents
 
-`ccse` (cc-switch-enhanced) rewrites the **model-name string** in 16 coding-agent configs at
+`ccse` (cc-switch-enhanced) rewrites the **model-name string** in 17 coding-agent configs at
 once. It touches *only* model names — never `base_url` / `api_key` / other fields. Every write
 is snapshotted first and is atomic, so it is safer than hand-editing JSON/TOML/YAML/env files.
 
