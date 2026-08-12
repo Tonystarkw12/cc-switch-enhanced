@@ -156,6 +156,22 @@ def test_envrc_kimi_zshrc(tmp_path, monkeypatch):
     assert again.slots()[0].current == "glm-5.2[1M]"
 
 
+def test_envrc_in_sync_no_duplicate(tmp_path, monkeypatch):
+    """When a var already equals the target, apply() must not report <unset> or
+    append a duplicate export line."""
+    from ccse import envrc as envrc_mod
+    rc = tmp_path / ".zshrc"
+    rc.write_text("export KIMI_MODEL_NAME='gpt-5.6-luna'\nexport OTHER=1\n", "utf-8")
+    monkeypatch.setattr(envrc_mod, "HOME", tmp_path, raising=False)
+    cls = envrc_mod.make_envrc_adapter(
+        "kimi_t2", "Kimi T2", {"model": "KIMI_MODEL_NAME"}, path=rc)
+    a = cls()
+    diffs = a.apply({"kimi_t2.model": "gpt-5.6-luna"}, dry=True)
+    assert diffs == []  # already in sync → nothing to change, no false append
+    text = rc.read_text("utf-8")
+    assert text.count("KIMI_MODEL_NAME") == 1  # no duplicate line added
+
+
 def test_keep_prefix_logic():
     """Bare model name keeps each adapter's route prefix; full name is verbatim."""
     from ccse import cli as cli_mod
@@ -210,6 +226,30 @@ def test_keep_prefix_logic():
     # name already carrying [1M] -> not doubled
     got4 = cli_mod._model_assignments("glm-5.2[1M]", None, None, keep_prefix=True)
     assert got4["claude.model"] == "glm-5.2[1M]"
+
+
+def test_model_follow_subagent():
+    """claude `--model X` also sets claude.subagent (CLAUDE_CODE_SUBAGENT_MODEL)."""
+    from ccse import cli as cli_mod
+
+    class A:
+        id = name = "claude"
+        path = Path("/x")
+        available = True
+        primary = "claude.model"
+        follow = ("claude.subagent",)
+        suffix = "[1M]"
+        def slots(_self):
+            from ccse.registry import Slot
+            return [Slot(key="claude.model", label="m", current="glm-5.2[1M]"),
+                    Slot(key="claude.subagent", label="s", current="glm-5.2[1M]")]
+        def apply(_self, *a, **k): return []
+
+    cli_mod._load_adapters = lambda: [A()]  # type: ignore
+    cli_mod._filter_adapters = lambda ads, o, e: ads  # type: ignore
+    got = cli_mod._model_assignments("gpt-5.6-luna", None, None, keep_prefix=True)
+    assert got["claude.model"] == "gpt-5.6-luna[1M]"
+    assert got["claude.subagent"] == "gpt-5.6-luna[1M]"
 
 
 def test_snow_adapter(tmp_path, monkeypatch):

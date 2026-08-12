@@ -1,6 +1,6 @@
 [project]
 name = "cc-switch-enhanced"
-version = "0.1.1"
+version = "0.1.2"
 description = "One-line model-name switch across many coding agents (aggregator-API friendly)"
 readme = "README.md"
 requires-python = ">=3.11"

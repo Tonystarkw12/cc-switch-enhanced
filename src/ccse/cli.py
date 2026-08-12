@@ -28,6 +28,11 @@ def _primary_key(a) -> str:
     return getattr(a, "primary", f"{a.id}.model")
 
 
+def _follow_keys(a) -> list[str]:
+    """Keys set alongside the primary by `--model NAME` (e.g. claude.subagent)."""
+    return list(getattr(a, "follow", ()) or ())
+
+
 def _filter_adapters(adapters, only: str | None, exclude: str | None):
     onlyset = {s.strip() for s in only.split(",")} if only else None
     excl = {s.strip() for s in exclude.split(",")} if exclude else None
@@ -152,34 +157,42 @@ def _apply_assignments(assignments: dict[str, str], *, dry: bool,
     return 0
 
 
-def _model_assignments(name: str, only, exclude, keep_prefix: bool = True) -> dict[str, str]:
-    """Build {primary_key: target} for every adapter in scope.
+def _model_target(name: str, cur: str | None, keep_prefix: bool, suffix: str) -> str:
+    """Compute the value a slot should get from a bare ``--model NAME``.
 
-    - keep_prefix: if the current primary value carries a structural
-      ``<prefix>/<model>`` route id (opencode ``newapi/...``, openclaw
-      ``dmx/...``, forge/gemini ``krill/...``) and the user passed a bare model
-      name (no ``/``), keep that adapter's own prefix so its upstream router
-      still resolves. A NAME already containing ``/`` is used verbatim.
+    - keep_prefix: if the current value carries a structural ``<prefix>/<model>``
+      route id and the user passed a bare name (no ``/``), keep the prefix so the
+      agent's upstream router still resolves. A NAME already containing ``/`` is
+      used verbatim.
     - suffix: adapters that declare a ``suffix`` (e.g. claude needs ``[1M]``)
-      get it appended to bare names — that marker is aggregator-specific and
-      no other agent has it."""
+      get it appended to bare names — that marker is aggregator-specific and no
+      other agent has it."""
+    target = name
+    if keep_prefix and "/" not in name and cur and "/" in cur:
+        target = cur.rsplit("/", 1)[0] + "/" + name
+    if suffix and not target.endswith(suffix):
+        target += suffix
+    return target
+
+
+def _model_assignments(name: str, only, exclude, keep_prefix: bool = True) -> dict[str, str]:
+    """Build {slot_key: target} for every adapter in scope.
+
+    Sets the adapter's primary slot; adapters that declare ``follow``
+    (e.g. claude.main + claude.subagent) get those too."""
     adapters = _filter_adapters(_load_adapters(), only, exclude)
     out: dict[str, str] = {}
     for a in adapters:
         if not a.available:
             continue
-        key = _primary_key(a)
         slots = {s.key: s for s in a.slots()}
-        if key not in slots:
-            continue
-        cur = slots[key].current
-        target = name
-        if keep_prefix and "/" not in name and cur and "/" in cur:
-            target = cur.rsplit("/", 1)[0] + "/" + name
-        suffix = getattr(a, "suffix", "") or ""
-        if suffix and not target.endswith(suffix):
-            target += suffix
-        out[key] = target
+        keys = [_primary_key(a), *_follow_keys(a)]
+        for key in keys:
+            if key not in slots:
+                continue
+            cur = slots[key].current
+            out[key] = _model_target(
+                name, cur, keep_prefix, getattr(a, "suffix", "") or "")
     return out
 
 

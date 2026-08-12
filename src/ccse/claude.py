@@ -28,6 +28,11 @@ class ClaudeAdapter:
     id = "claude"
     name = "Claude Code"
     primary = "claude.model"
+    # slots `ccse --model X` also sets, in addition to primary: the subagent
+    # model should follow the main model. Tier overrides (haiku/sonnet/opus)
+    # are deliberately excluded — users may run different models per tier
+    # (e.g. sonnet=qwen3.8-max while main=glm-5.2); switch those via profile.
+    follow = ("claude.model", "claude.subagent")
     suffix = "[1M]"  # Claude Code model names carry a context-window marker the
     #                aggregator needs (e.g. "glm-5.2[1M]"); other agents don't.
     path = config.HOME / ".claude" / "settings.json"

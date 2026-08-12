@@ -98,12 +98,13 @@ def make_envrc_adapter(
                 var = m.group("var")
                 old = _unquote(m.group("val"))
                 val = want_vars[var]
+                written.add(var)  # present in file; never append a duplicate
                 if old != val:
-                    new = f"export {var}={_quote(val)}"
-                    new_lines.append(new)
+                    new_lines.append(f"export {var}={_quote(val)}")
                     diffs.append(f"  export {var}: {old!r} -> {val!r}")
-                    written.add(var)
-                    continue
+                else:
+                    new_lines.append(line)  # already in sync, keep as-is
+                continue
             new_lines.append(line)
         # append any vars not present in the file
         for var, val in want_vars.items():
