@@ -1,0 +1,20 @@
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+dist/
+build/
+.pytest_cache/
+
+# ccse local state
+.ccse/
+
+# harness artifacts (not part of this package)
+.claude/
+.codex/
+.mcp.json
+.repowise/
+.spec-workflow/
+.vscode/
+AGENTS.md
