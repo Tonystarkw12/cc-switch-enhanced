@@ -27,7 +27,7 @@ _ENV_KEY_ADAPTERS = ("codex", "grok", "reasonix", "memmy", "omp", "prime")
 
 def _load_adapters():
     # import side-effect registers adapters
-    from . import claude, cline, codex, gemini, opencode, qwen, prime, openakita  # noqa: F401
+    from . import claude, cline, codex, gemini, opencode, qwen, prime, openakita, jcode  # noqa: F401
     from . import extra, envrc  # noqa: F401
     return all_adapters()
 
@@ -549,6 +549,18 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--dry", action="store_true", help="preview only, write nothing")
     pr.set_defaults(func=cmd_rewrite)
 
+    sru = sub.add_parser(
+        "rules", help="inject/remove a behavioral snippet (caveman + rtk by "
+                       "default) into every agent's global instructions file")
+    _add_scope(sru)
+    sru.add_argument("--apply", action="store_true",
+                     help="inject the snippet (default: built-in caveman+rtk)")
+    sru.add_argument("--rm", action="store_true", help="remove the injected block")
+    sru.add_argument("--snippet", metavar="PATH",
+                     help="custom snippet file instead of the built-in default")
+    sru.add_argument("--dry", action="store_true", help="preview only, write nothing")
+    sru.set_defaults(func=cmd_rules)
+
     return p
 
 
@@ -564,6 +576,20 @@ def cmd_rewrite(args) -> int:
     if not assignments:
         config.die("rewrite needs at least one of --base-url/--api-key/--model")
     return rewrite.run(Path(args.dir), assignments, dry=args.dry)
+
+
+def cmd_rules(args) -> int:
+    from . import rules
+    if getattr(args, "rm", False):
+        rules.remove(args.only, args.exclude, dry=args.dry)
+    elif getattr(args, "apply", False):
+        snippet = None
+        if getattr(args, "snippet", None):
+            snippet = Path(args.snippet).read_text("utf-8")
+        rules.apply(args.only, args.exclude, snippet=snippet, dry=args.dry)
+    else:
+        rules.status(args.only, args.exclude)
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:

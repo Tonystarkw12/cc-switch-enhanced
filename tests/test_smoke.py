@@ -14,13 +14,13 @@ from ccse.registry import all_adapters
 
 def test_registry_loads_all_targets():
     from ccse import claude, cline, codex, gemini, opencode, qwen, prime  # noqa: F401
-    from ccse import openakita  # noqa: F401
+    from ccse import openakita, jcode  # noqa: F401
     from ccse import extra  # noqa: F401
     ids = {a.id for a in all_adapters()}
     for expect in ("claude", "codex", "opencode", "gemini", "qwen", "cline",
                    "codebuddy", "pi", "openclaw", "kilocode", "reasonix",
                    "grok", "forge", "hermes", "snow", "crush", "droid",
-                   "memmy", "prime", "omp", "kilo", "openakita"):
+                   "memmy", "prime", "omp", "kilo", "openakita", "jcode"):
         assert expect in ids, f"missing adapter {expect}"
 
 
@@ -237,6 +237,71 @@ def test_codex_literal_api_key(tmp_path: Path, monkeypatch):
     d = tomllib.loads(cfg.read_text())
     assert d["model_providers"]["newapi"]["api_key"] == "sk-new-literal"
     codex_mod.CodexAdapter.path = config.HOME / ".codex" / "config.toml"
+
+
+def test_jcode_roundtrip(tmp_path: Path, monkeypatch):
+    """JCode: model writes mirror into the provider block + registry; a stale
+    default_provider falls back to the first providers.* block; api_key env-var
+    mode routes to ~/.zshrc (asserted in dry mode, no write)."""
+    import tomllib
+    from ccse import jcode as jc_mod
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        '[provider]\ndefault_provider = "openai-compatible"\n'
+        'default_model = "gpt-5.6-terra"\n'
+        '[providers.newapi]\ntype = "openai-compatible"\n'
+        'base_url = "http://192.168.0.14:6333/v1"\n'
+        'api_key_env = "JCODE_PROVIDER_NEWAPI_API_KEY"\n'
+        'default_model = "gpt-5.6-terra"\n'
+        '[[providers.newapi.models]]\nid = "gpt-5.6-terra"\n')
+    jc_mod.JCodeAdapter.path = cfg  # type: ignore[misc]
+    a = jc_mod.JCodeAdapter()
+    slots = {s.key: s for s in a.slots()}
+    assert slots["jcode.model"].current == "gpt-5.6-terra"
+    assert slots["jcode.base_url"].current == "http://192.168.0.14:6333/v1"
+    assert slots["jcode.api_key"].current == "JCODE_PROVIDER_NEWAPI_API_KEY"  # env name
+    # model switch mirrors + adds registry entry (provider resolved via fallback)
+    diffs = a.apply({"jcode.model": "glm-5.2"}, dry=False)
+    assert any("provider.default_model" in d for d in diffs)
+    assert any("providers[newapi].default_model" in d for d in diffs)
+    assert any("models" in d and "glm-5.2" in d for d in diffs)
+    d = tomllib.loads(cfg.read_text())
+    assert d["provider"]["default_model"] == "glm-5.2"
+    assert d["providers"]["newapi"]["default_model"] == "glm-5.2"
+    assert any(m.get("id") == "glm-5.2" for m in d["providers"]["newapi"]["models"])
+    # idempotent: re-applying same model adds no duplicate registry entry
+    a.apply({"jcode.model": "glm-5.2"}, dry=False)
+    d = tomllib.loads(cfg.read_text())
+    assert sum(1 for m in d["providers"]["newapi"]["models"] if m.get("id") == "glm-5.2") == 1
+    # base_url switch
+    a.apply({"jcode.base_url": "http://10.0.0.5/v1"}, dry=False)
+    assert tomllib.loads(cfg.read_text())["providers"]["newapi"]["base_url"] == "http://10.0.0.5/v1"
+    # api_key env-var mode routes to zshrc (dry → diff only, no write)
+    kd = a.apply({"jcode.api_key": "sk-new"}, dry=True)
+    assert any("(zshrc)" in x and "JCODE_PROVIDER_NEWAPI_API_KEY" in x for x in kd)
+    jc_mod.JCodeAdapter.path = config.HOME / ".jcode" / "config.toml"
+
+
+def test_rules_inject_remove(tmp_path: Path, monkeypatch):
+    """`ccse rules`: idempotent marked-block inject into an agent's global
+    instructions file, update on changed snippet, remove restores original."""
+    from ccse import rules
+    f = tmp_path / "AGENTS.md"
+    f.write_text("# existing\nsome content\n")
+    monkeypatch.setitem(rules.INSTRUCTION_FILES, "codex", f)
+    rules.apply(only="codex", snippet="RULE BODY")          # inject
+    txt = f.read_text("utf-8")
+    assert rules.START in txt and "RULE BODY" in txt
+    assert "# existing" in txt and "some content" in txt     # original preserved
+    rules.apply(only="codex", snippet="RULE BODY")          # idempotent
+    assert f.read_text("utf-8") == txt
+    rules.apply(only="codex", snippet="NEW BODY")           # update
+    after = f.read_text("utf-8")
+    assert "NEW BODY" in after and "RULE BODY" not in after
+    rules.remove(only="codex")                               # remove
+    final = f.read_text("utf-8")
+    assert rules.START not in final and rules.END not in final
+    assert "# existing" in final and "some content" in final
 
 
 def test_jsonpath_list_selector_roundtrip():
