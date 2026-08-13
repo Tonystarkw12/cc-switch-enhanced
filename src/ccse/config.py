@@ -64,6 +64,21 @@ def keep_mode_write_json(path: Path, obj):
     return text
 
 
+def ensure_openai_v1(url):
+    """Append /v1 to an OpenAI-compatible base URL if it's missing.
+
+    The OpenAI SDK appends /chat/completions (etc.) to `baseURL`, and the
+    standard OpenAI endpoint is /v1/..., so a bare gateway root like
+    ``http://host:6333`` 404s or returns the gateway's HTML dashboard. This
+    normalizes ``http://host:6333`` -> ``http://host:6333/v1`` while leaving
+    an already-correct URL untouched.
+    """
+    if not url:
+        return url
+    u = url.rstrip("/")
+    return url if u.endswith("/v1") else u + "/v1"
+
+
 # --- snapshots / undo ------------------------------------------------------
 import json as _json  # noqa: E402
 

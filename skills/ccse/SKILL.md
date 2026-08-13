@@ -1,18 +1,11 @@
 ---
 name: ccse
-description: >
-  Switch the model-name string across many coding agents (Claude Code, Codex, Gemini, Qwen,
-  Cline, Grok, OpenCode, Pi, etc.) with one command. Use when the user wants to change the
-  active model in coding-agent configs — phrases like "switch model", "change model name",
-  "把模型改成 X", "切模型", "model changed / 名字变了要逐个改", "newapi 模型名变了",
-  "ccse", or when editing model fields by hand across ~/.claude, ~/.codex, ~/.grok, ~/.qwen,
-  ~/.gemini, ~/.zshrc (KIMI_MODEL_NAME/COPAW_MODEL_NAME). Prefers ccse over manual edits
-  because it snapshots, writes atomically, and preserves route prefixes + context suffixes.
+description: Switch model names across coding-agent configs with one command. USE WHEN switching or changing active models, model names, newapi model routes, or hand-editing model fields across Claude Code, Codex, Gemini, Qwen, Cline, Grok, OpenCode, Pi, Prime, Kilo, OMP, and related agents. Prefer ccse over manual edits because it snapshots, writes atomically, and preserves route prefixes and context suffixes.
 ---
 
 # ccse — one-line model switch across coding agents
 
-`ccse` (cc-switch-enhanced) rewrites the **model-name string** in 17 coding-agent configs at
+`ccse` (cc-switch-enhanced) rewrites the **model-name string** in 23 coding-agent configs at
 once. It touches *only* model names — never `base_url` / `api_key` / other fields. Every write
 is snapshotted first and is atomic, so it is safer than hand-editing JSON/TOML/YAML/env files.
 
@@ -99,26 +92,45 @@ This is how to express "Claude sonnet → qwen3.8-max, everything else → glm-5
 If a user says "I changed a model and something broke", reach for `ccse undo` (or
 `ccse snapshots` → `ccse undo <stamp>`) before manual repair.
 
-## Supported adapters (16)
+## Supported adapters (23)
 
 | adapter | config file | `--model` sets |
 |---|---|---|
 | `claude` | `~/.claude/settings.json` | `env.ANTHROPIC_MODEL` |
-| `codex` | `~/.codex/config.toml` | top-level `model` |
-| `opencode` | `~/.config/opencode/opencode.json` | top-level `model` |
-| `gemini` | `~/.gemini/.env` | `GEMINI_MODEL` |
-| `qwen` | `~/.qwen/settings.json` | `model.name` |
 | `cline` | `~/.cline/data/settings/providers.json` | `providers[lastUsed].settings.model` |
 | `codebuddy` | `~/.codebuddy/settings.json` | `model` |
-| `pi` | `~/.pi/agent/settings.json` | `llm.model` |
-| `openclaw` | `~/.openclaw/openclaw.json` | `agents.defaults.model.primary` |
-| `kilocode` | `~/.kilocode/cli/config.json` | `providers[newapi].apiModelId` |
-| `reasonix` | `~/.reasonix/config.toml` | matched `[[providers]].model` |
-| `grok` | `~/.grok/config.toml` | `[models].default` |
-| `forge` | `~/.forge/.forge.toml` | `[session].model_id` |
-| `hermes` | `~/.hermes/config.yaml` | `model.default` |
-| `kimi` | `~/.zshrc` | `KIMI_MODEL_NAME` |
+| `codex` | `~/.codex/config.toml` | top-level `model` |
 | `copaw` | `~/.zshrc` | `COPAW_MODEL_NAME` |
+| `crush` | `~/.config/crush/crush.json` + `~/.local/share/crush/providers.json` | `providers[active].default_large_model_id` |
+| `droid` | `~/.factory/settings.json` | `sessionDefaultSettings.model` |
+| `forge` | `~/.forge/.forge.toml` | `[session].model_id` |
+| `gemini` | `~/.gemini/.env` | `GEMINI_MODEL` |
+| `grok` | `~/.grok/config.toml` | `[models].default` |
+| `hermes` | `~/.hermes/config.yaml` | `model.default` |
+| `kilo` | `~/.config/kilo/kilo.json` | `model` + every `newapi/<name>` ref (see note) |
+| `kilocode` | `~/.kilocode/cli/config.json` | `providers[newapi].apiModelId` |
+| `kimi` | `~/.zshrc` | `KIMI_MODEL_NAME` |
+| `memmy` | `~/.memmy/config.yaml` | `agents.defaults.model` |
+| `omp` | `~/.omp/agent/config.yml` | `llm.model` (+ `defaultModel`, `modelRoles.default`) |
+| `openclaw` | `~/.openclaw/openclaw.json` | `agents.defaults.model.primary` |
+| `opencode` | `~/.config/opencode/opencode.json` | top-level `model` |
+| `pi` | `~/.pi/agent/settings.json` | `llm.model` (+ `defaultModel`) |
+| `prime` | `~/.prime/agent/settings.json` + `~/.prime/agent/models.json` | `defaultModel` |
+| `qwen` | `~/.qwen/settings.json` | `model.name` |
+| `reasonix` | `~/.reasonix/config.toml` | matched `[[providers]].model` |
+| `snow` | `~/.snow/config.json` | `snowcfg.advancedModel` |
+
+Two adapters look alike — don't confuse them:
+
+- **`kilocode`** is the VS Code extension (`~/.kilocode/cli/config.json`, `providers[]` list).
+- **`kilo`** is the standalone `kilo` CLI (`~/.config/kilo/kilo.json`). Its model is
+  referenced as `newapi/<name>` strings in many fields, and the CLI validates a model
+  **registry** at `provider.<provider>.models.<bare-name>` at startup — the entry must carry
+  `modalities.output` or `kilo` refuses to start. `ccse` handles both: it rewrites every
+  `newapi/<name>` string (top-level `model`, `subagent_model`, `small_model`,
+  `experimental.swe_pruner_model`, each `agent.<name>.model`, `subagent_variant_overrides`) AND
+  (re)creates the registry entry for the new bare name, copying schema from the previous model
+  when present.
 
 `ccse list` shows which adapter files are present on this machine; `ccse show` prints the live
 value of every slot. Run `ccse show` before deciding what to switch.
@@ -151,10 +163,36 @@ ccse snapshots        # find the stamp
 ccse undo             # or: ccse undo <stamp>
 ```
 
-## Notes
+## Gotchas
 
-- Requires `ccse` on PATH (installed via `uv tool install .` / `pipx install .` from the repo).
-  If `command -v ccse` fails, the CLI isn't installed — tell the user rather than hand-editing.
+- Preview first: `ccse diff --model NAME` writes nothing; apply snapshots before atomic replacement.
+- Bare model names preserve each adapter's route prefix; names containing `/` override it.
+- `kilo` and `kilocode` are different adapters. Kilo also needs its provider model registry entry updated.
+- `prime` and `pi` resolve active models through their catalogs; switching only the visible settings field can leave them broken.
+- OpenAI-compatible base URLs are normalized to `/v1`; an already suffixed URL is left unchanged.
+
+
+## Install & download
+
+Requires `ccse` on PATH. Install from the release artifacts (Python ≥3.11) or from the repo:
+
+```bash
+# from the CNB release (0.2.4, latest)
+uv tool install "cc-switch-enhanced @ https://cnb.cool/tonykw12/cc-switch-enhanced/-/releases/download/0.2.4/cc_switch_enhanced-0.2.4-py3-none-any.whl"
+# or pip:
+pip install "https://cnb.cool/tonykw12/cc-switch-enhanced/-/releases/download/0.2.4/cc_switch_enhanced-0.2.4-py3-none-any.whl"
+
+# from the repo
+uv tool install .    # or: pipx install .
+```
+
+Direct download links:
+
+- wheel: https://cnb.cool/tonykw12/cc-switch-enhanced/-/releases/download/0.2.4/cc_switch_enhanced-0.2.4-py3-none-any.whl
+- sdist: https://cnb.cool/tonykw12/cc-switch-enhanced/-/releases/download/0.2.4/cc_switch_enhanced-0.2.4.tar.gz
+
+If `command -v ccse` fails after install, the CLI isn't on PATH — tell the user rather than
+hand-editing. Verify with `ccse list` (prints the 23 known adapters and which config files exist).
 - env-rc adapters (`kimi`, `copaw`) edit a single `export VAR=...` line in `~/.zshrc`; names with
   special chars (`glm-5.2[1M]`) are single-quote-escaped safely. Other rc content is untouched.
 - JSON-path selectors supported in profiles: `providers[id=newapi].model`,

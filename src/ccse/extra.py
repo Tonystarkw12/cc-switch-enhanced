@@ -46,26 +46,98 @@ make_adapter(
     {"model": "model"},
 )
 
-# PI (lazyypi): ~/.pi/agent/settings.json — llm.model + subagents overrides +
-# defaultModel + provider model defs. `--model` also sets defaultModel — pi
-# resolves the active model from defaultModel, not llm.model, so missing it
-# would leave the switch half-applied.
-make_adapter(
-    "pi", "Pi",
-    HOME / ".pi" / "agent" / "settings.json",
-    {
-        "model": "llm.model",
-        "defaultModel": "defaultModel",
-        "subagent.context-builder": "subagents.agentOverrides.context-builder.model",
-        "subagent.planner": "subagents.agentOverrides.planner.model",
-        "subagent.researcher": "subagents.agentOverrides.researcher.model",
-        "subagent.reviewer": "subagents.agentOverrides.reviewer.model",
-        "subagent.scout": "subagents.agentOverrides.scout.model",
-        "subagent.worker": "subagents.agentOverrides.worker.model",
-    },
-    endpoint_paths={"base_url": "llm.baseUrl", "api_key": "llm.apiKey"},
-    follow=("defaultModel",),
-)
+# PI (lazyypi): ~/.pi/agent/settings.json + models.json. Pi resolves the
+# active model from defaultModel and requires that model in the active
+# provider's models.json catalog; keep both files synchronized.
+PI_MODELS_JSON = HOME / ".pi" / "agent" / "models.json"
+
+
+@register
+class PiAdapter:
+    id = "pi"
+    name = "Pi"
+    primary = "pi.model"
+    follow = ("pi.defaultModel",)
+    path = HOME / ".pi" / "agent" / "settings.json"
+
+    @property
+    def available(self):
+        return self.path.exists()
+
+    def _settings(self):
+        return config.load_json(self.path) or {}
+
+    def _models(self):
+        return config.load_json(PI_MODELS_JSON) or {}
+
+    def slots(self):
+        if not self.available:
+            return []
+        s = self._settings()
+        out = [Slot(key="pi.model", label="model", current=(s.get("llm") or {}).get("model"))]
+        out.append(Slot(key="pi.defaultModel", label="defaultModel",
+                        current=s.get("defaultModel")))
+        llm = s.get("llm") or {}
+        out.append(Slot(key="pi.base_url", label="base_url",
+                        current=llm.get("baseUrl"), kind=KIND_BASE_URL))
+        out.append(Slot(key="pi.api_key", label="api_key",
+                        current=llm.get("apiKey"), kind=KIND_API_KEY))
+        return out
+
+    def apply(self, assignments, dry=False):
+        relevant = {k[3:]: v for k, v in assignments.items()
+                    if k.startswith("pi.")}
+        if not relevant or not self.available:
+            return []
+        s = self._settings()
+        m = self._models()
+        llm = s.setdefault("llm", {})
+        diffs = []
+        new_model = relevant.get("model") or relevant.get("defaultModel")
+        if new_model is not None:
+            for field in ("model", "defaultModel"):
+                old = llm.get("model") if field == "model" else s.get(field)
+                if old != new_model:
+                    diffs.append(f"  {field}: {old!r} -> {new_model!r}")
+                    if not dry:
+                        if field == "model":
+                            llm["model"] = new_model
+                        else:
+                            s[field] = new_model
+            provider_name = s.get("defaultProvider")
+            for source, label in ((s, "settings"), (m, "models")):
+                provider = (source.get("providers") or {}).get(provider_name)
+                catalog = provider.get("models") if isinstance(provider, dict) else None
+                if isinstance(catalog, list) and catalog and isinstance(catalog[0], dict):
+                    old = catalog[0].get("id")
+                    if old != new_model:
+                        diffs.append(f"  {label}[{provider_name}].models[0].id: "
+                                     f"{old!r} -> {new_model!r}")
+                        if not dry:
+                            catalog[0]["id"] = new_model
+                            catalog[0]["name"] = new_model.replace("-", " ").title()
+            if not dry:
+                config.keep_mode_write_json(PI_MODELS_JSON, m)
+        if "base_url" in relevant:
+            base_url = config.ensure_openai_v1(relevant["base_url"])
+            old = llm.get("baseUrl")
+            if old != base_url:
+                diffs.append(f"  llm.baseUrl: {old!r} -> {base_url!r}")
+                if not dry:
+                    llm["baseUrl"] = base_url
+        if "api_key" in relevant:
+            var = llm.get("apiKey") or "OPENAI_API_KEY"
+            old_key = os.environ.get(var)
+            if old_key != relevant["api_key"]:
+                if not dry:
+                    from .envrc import ensure_env_var
+                    ensure_env_var(var, relevant["api_key"])
+                diffs.append(f"  env {var}: {config.redact(old_key)!r} -> "
+                             f"{config.redact(relevant['api_key'])!r}")
+        if diffs and not dry:
+            config.keep_mode_write_json(self.path, s)
+        return diffs
+
 
 # OpenClaw: ~/.openclaw/openclaw.json — agents.defaults.model.primary +
 # subagents.model; endpoint under models.providers.<active> (dict, not list)
@@ -93,6 +165,125 @@ make_adapter(
         "api_key": "providers[newapi].openAiApiKey",
     },
 )
+
+
+@register
+class KiloAdapter:
+    """Kilo Code CLI ~/.config/kilo/kilo.json (distinct from the VS Code
+    extension's ~/.kilocode, which `kilocode` above handles).
+
+    The model is referenced by `newapi/<name>` strings in many fields: top-level
+    `model`, `subagent_model`, `small_model`, `experimental.swe_pruner_model`,
+    and every `agent.<name>.model`. Separately, the CLI validates a model
+    *registry* at `provider.<provider>.models.<bare-name>` at startup — the
+    entry must carry `modalities.output` or `kilo` refuses to start. So `--model`
+    must both rewrite the strings AND (re)create the registry entry for the new
+    bare name (copying schema from the previous model when present), or the
+    switch silently breaks the CLI."""
+    id = "kilo"
+    name = "Kilo"
+    primary = "kilo.model"
+    path = HOME / ".config" / "kilo" / "kilo.json"
+
+    @property
+    def available(self):
+        return self.path.exists()
+
+    def _provider(self, d):
+        model = d.get("model")
+        if isinstance(model, str) and "/" in model:
+            return model.split("/", 1)[0]
+        return next(iter(d.get("provider", {})), None)
+
+    def slots(self):
+        if not self.available:
+            return []
+        d = config.load_json(self.path) or {}
+        out = [Slot(key="kilo.model", label="model", current=d.get("model"))]
+        prov = self._provider(d)
+        provcfg = (d.get("provider") or {}).get(prov) if prov else None
+        if isinstance(provcfg, dict):
+            opts = provcfg.get("options") or {}
+            if opts.get("baseURL"):
+                out.append(Slot(key="kilo.base_url",
+                                label=f"provider.{prov}.options.baseURL",
+                                current=opts.get("baseURL"), kind=KIND_BASE_URL))
+        return out
+
+    def apply(self, assignments, dry=False):
+        relevant = {k[len("kilo."):]: v for k, v in assignments.items()
+                    if k.startswith("kilo.")}
+        if not relevant or not self.available:
+            return []
+        d = config.load_json(self.path) or {}
+        diffs: list[str] = []
+
+        if "model" in relevant:
+            new = relevant["model"]
+            old = d.get("model")
+            prov = new.split("/", 1)[0] if isinstance(new, str) and "/" in new \
+                else self._provider(d)
+            bare = new.split("/", 1)[1] if isinstance(new, str) and "/" in new else new
+            bare_old = old.split("/", 1)[1] \
+                if isinstance(old, str) and "/" in old else None
+
+            if old != new:
+                d["model"] = new
+                diffs.append(f"  model: {old!r} -> {new!r}")
+                for key in ("subagent_model", "small_model"):
+                    if key in d and d[key] != new:
+                        diffs.append(f"  {key}: {d[key]!r} -> {new!r}")
+                        d[key] = new
+                exp = d.get("experimental")
+                if isinstance(exp, dict) and "swe_pruner_model" in exp \
+                        and exp["swe_pruner_model"] != new:
+                    diffs.append(f"  experimental.swe_pruner_model: "
+                                 f"{exp['swe_pruner_model']!r} -> {new!r}")
+                    exp["swe_pruner_model"] = new
+                agents = d.get("agent")
+                if isinstance(agents, dict):
+                    for name, acfg in agents.items():
+                        if isinstance(acfg, dict) and acfg.get("model") != new:
+                            diffs.append(f"  agent.{name}.model: "
+                                         f"{acfg.get('model')!r} -> {new!r}")
+                            acfg["model"] = new
+                sv = d.get("subagent_variant_overrides")
+                if isinstance(sv, dict) and isinstance(old, str) \
+                        and old in sv and new != old:
+                    sv[new] = sv.pop(old)
+                    diffs.append(f"  subagent_variant_overrides: {old!r} -> {new!r}")
+
+            # ensure registry entry so `kilo` startup validation passes
+            provs = d.get("provider")
+            provcfg = provs.get(prov) if isinstance(provs, dict) and prov else None
+            models = provcfg.get("models") if isinstance(provcfg, dict) else None
+            if isinstance(models, dict) and bare not in models:
+                src = models.get(bare_old) if bare_old else None
+                entry = dict(src) if isinstance(src, dict) else {
+                    "name": bare, "reasoning": True,
+                    "modalities": {"input": ["text", "image"],
+                                   "output": ["text"]},
+                }
+                entry["name"] = bare
+                if not dry:
+                    models[bare] = entry
+                diffs.append(f"  provider.{prov}.models[{bare}]: (created)"
+                             + (f" copied from {bare_old!r}" if bare_old else ""))
+
+        if "base_url" in relevant:
+            prov = self._provider(d)
+            provs = d.get("provider")
+            provcfg = provs.get(prov) if isinstance(provs, dict) and prov else None
+            opts = provcfg.setdefault("options", {}) if isinstance(provcfg, dict) else None
+            if opts is not None and opts.get("baseURL") != relevant["base_url"]:
+                diffs.append(f"  provider.{prov}.options.baseURL: "
+                             f"{opts.get('baseURL')!r} -> {relevant['base_url']!r}")
+                if not dry:
+                    opts["baseURL"] = relevant["base_url"]
+
+        if diffs and not dry:
+            config.keep_mode_write_json(self.path, d)
+        return diffs
 
 # Snow: ~/.snow/config.json — snowcfg.advancedModel (main model; snow falls
 # back to "gpt-5" when empty). basicModel is a secondary slot for --useBasicModel.
@@ -658,6 +849,9 @@ class OmpAdapter:
     follow = ("omp.model", "omp.defaultModel", "omp.modelRole")
     path = HOME / ".omp" / "agent" / "config.yml"
 
+    def _catalog_paths(self):
+        return (self.path, self.path.with_name("models.yml"))
+
     @property
     def available(self):
         return self.path.exists()
@@ -719,12 +913,37 @@ class OmpAdapter:
                 diffs.append(f"  modelRoles.default: {old!r} -> {new!r}")
                 if not dry:
                     mr["default"] = new
-        if "base_url" in relevant:
-            old = llm.get("baseUrl")
-            if old != relevant["base_url"]:
-                diffs.append(f"  llm.baseUrl: {old!r} -> {relevant['base_url']!r}")
+        if "model" in relevant:
+            provider_name = doc.get("defaultProvider")
+            for catalog_path in self._catalog_paths():
+                if catalog_path == self.path:
+                    catalog_doc, catalog_yaml = doc, y
+                else:
+                    catalog_doc, catalog_yaml = _load_yaml(catalog_path)
+                provider = ((catalog_doc or {}).get("providers") or {}).get(provider_name)
+                models = provider.get("models") if isinstance(provider, dict) else None
+                if not isinstance(models, list) or not models or not isinstance(models[0], dict):
+                    continue
+                old = models[0].get("id")
+                if old == relevant["model"]:
+                    continue
+                diffs.append(f"  {catalog_path.name}[{provider_name}].models[0].id: "
+                             f"{old!r} -> {relevant['model']!r}")
                 if not dry:
-                    llm["baseUrl"] = relevant["base_url"]
+                    models[0]["id"] = relevant["model"]
+                    models[0]["name"] = relevant["model"].replace("-", " ").title()
+                    if catalog_path != self.path:
+                        from io import StringIO
+                        buf = StringIO()
+                        catalog_yaml.dump(catalog_doc, buf)
+                        config.write_text_atomic(catalog_path, buf.getvalue())
+        if "base_url" in relevant:
+            base_url = config.ensure_openai_v1(relevant["base_url"])
+            old = llm.get("baseUrl")
+            if old != base_url:
+                diffs.append(f"  llm.baseUrl: {old!r} -> {base_url!r}")
+                if not dry:
+                    llm["baseUrl"] = base_url
         if "api_key" in relevant:
             var = _env_name(llm.get("apiKey"))
             old_key = os.environ.get(var)

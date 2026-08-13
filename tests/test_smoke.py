@@ -19,8 +19,95 @@ def test_registry_loads_all_targets():
     for expect in ("claude", "codex", "opencode", "gemini", "qwen", "cline",
                    "codebuddy", "pi", "openclaw", "kilocode", "reasonix",
                    "grok", "forge", "hermes", "snow", "crush", "droid",
-                   "memmy", "prime", "omp"):
+                   "memmy", "prime", "omp", "kilo"):
         assert expect in ids, f"missing adapter {expect}"
+
+
+def test_ensure_openai_v1():
+    assert config.ensure_openai_v1("http://host:6333") == "http://host:6333/v1"
+    assert config.ensure_openai_v1("http://host:6333/") == "http://host:6333/v1"
+    assert config.ensure_openai_v1("http://host:6333/v1") == "http://host:6333/v1"
+    assert config.ensure_openai_v1("http://host:6333/v1/") == "http://host:6333/v1/"
+    assert config.ensure_openai_v1("") == ""
+    assert config.ensure_openai_v1(None) is None
+
+
+def test_prime_base_url_normalized(tmp_path: Path, monkeypatch):
+    """prime adapter appends /v1 to a bare gateway base_url (openai SDK
+    appends /chat/completions, so a root URL returns the gateway's HTML)."""
+    from ccse import prime as prime_mod
+    settings = tmp_path / "settings.json"
+    models = tmp_path / "models.json"
+    settings.write_text(json.dumps({
+        "defaultProvider": "newapi",
+        "defaultModel": "deepseek-v4-pro",
+        "recentModels": ["newapi/deepseek-v4-pro"],
+    }))
+    models.write_text(json.dumps({
+        "providers": {"newapi": {
+            "baseUrl": "http://host:6333",
+            "api": "openai-completions",
+            "apiKey": "OPENAI_API_KEY",
+            "models": [{"id": "deepseek-v4-pro", "name": "Deepseek V4 Pro"}],
+        }}
+    }))
+    monkeypatch.setattr(prime_mod, "MODELS_JSON", models, raising=False)
+    monkeypatch.setattr(prime_mod.PrimeAdapter, "path", settings, raising=False)
+    a = prime_mod.PrimeAdapter()
+    diffs = a.apply({"prime.base_url": "http://host:6333"}, dry=False)
+    assert any("baseUrl" in d and "/v1" in d for d in diffs)
+    assert json.loads(models.read_text())["providers"]["newapi"]["baseUrl"] == \
+        "http://host:6333/v1"
+
+
+def test_pi_base_url_normalized(tmp_path: Path, monkeypatch):
+    """pi adapter (make_adapter base_url_v1) appends /v1 to a bare gateway baseUrl."""
+    from ccse.jsonpath import make_adapter
+    from ccse.registry import REGISTRY
+    settings = tmp_path / "settings.json"
+    settings.write_text(json.dumps({
+        "llm": {"model": "deepseek-v4-pro", "baseUrl": "http://host:6333",
+                "apiKey": "OPENAI_API_KEY"},
+        "defaultModel": "deepseek-v4-pro",
+    }))
+    make_adapter(
+        "pi_test", "Pi Test", settings,
+        {"model": "llm.model", "defaultModel": "defaultModel"},
+        endpoint_paths={"base_url": "llm.baseUrl", "api_key": "llm.apiKey"},
+        follow=("defaultModel",),
+        base_url_v1=True,
+    )
+    try:
+        a = REGISTRY["pi_test"]()
+        diffs = a.apply({"pi_test.base_url": "http://host:6333"}, dry=False)
+        assert any("baseUrl" in d and "/v1" in d for d in diffs)
+        assert json.loads(settings.read_text())["llm"]["baseUrl"] == "http://host:6333/v1"
+        # already-correct /v1 is left untouched
+        assert a.apply({"pi_test.base_url": "http://host:6333/v1"}, dry=False) == []
+    finally:
+        del REGISTRY["pi_test"]
+
+
+def test_omp_base_url_normalized(tmp_path: Path, monkeypatch):
+    """omp adapter appends /v1 to a bare gateway llm.baseUrl."""
+    try:
+        import ruamel.yaml  # noqa
+    except ImportError:
+        return
+    from ccse import extra as extra_mod
+    cfg = tmp_path / "config.yml"
+    cfg.write_text(
+        "llm:\n"
+        "  model: deepseek-v4-pro\n"
+        "  baseUrl: http://host:6333\n"
+        "  apiKey: ${OPENAI_API_KEY}\n"
+        "defaultModel: deepseek-v4-pro\n", "utf-8")
+    extra_mod.OmpAdapter.path = cfg  # type: ignore
+    a = extra_mod.OmpAdapter()
+    diffs = a.apply({"omp.base_url": "http://host:6333"}, dry=False)
+    assert any("baseUrl" in d and "/v1" in d for d in diffs)
+    assert "baseUrl: http://host:6333/v1" in cfg.read_text("utf-8")
+    extra_mod.OmpAdapter.path = config.HOME / ".omp" / "agent" / "config.yml"
 
 
 def _patch_home(adapters_mods, tmp_path):
@@ -196,7 +283,55 @@ def test_envrc_windows_user_env(tmp_path, monkeypatch):
     assert diffs2 == [] and len(calls) == 1
 
 
-def test_os_detection():
+def test_kilo_adapter(tmp_path, monkeypatch):
+    """Kilo CLI ~/.config/kilo/kilo.json: --model rewrites every `newapi/<name>`
+    model string (model, subagent/small/swe_pruner, each agent.*.model) AND
+    (re)creates provider.<prov>.models.<bare> so startup validation passes."""
+    from ccse import extra as extra_mod
+    cfg = tmp_path / "kilo.json"
+    cfg.write_text(json.dumps({
+        "model": "newapi/gpt-5.6-terra",
+        "subagent_model": "newapi/gpt-5.6-terra",
+        "small_model": "newapi/gpt-5.6-terra",
+        "experimental": {"swe_pruner_model": "newapi/gpt-5.6-terra"},
+        "agent": {"code": {"model": "newapi/gpt-5.6-terra"},
+                  "ask": {"model": "newapi/gpt-5.6-terra"}},
+        "subagent_variant_overrides": {"newapi/gpt-5.6-terra": "high"},
+        "provider": {"newapi": {
+            "options": {"baseURL": "http://a/v1"},
+            "models": {"gpt-5.6-terra": {
+                "name": "gpt-5.6-terra", "reasoning": True,
+                "modalities": {"input": ["text", "image"],
+                               "output": ["text"]}}}}},
+    }))
+    monkeypatch.setattr(extra_mod, "HOME", tmp_path, raising=False)
+    extra_mod.KiloAdapter.path = cfg  # type: ignore[misc]
+    a = extra_mod.KiloAdapter()
+    slots = {s.key: s for s in a.slots()}
+    assert slots["kilo.model"].current == "newapi/gpt-5.6-terra"
+    assert slots["kilo.base_url"].current == "http://a/v1"
+
+    diffs = a.apply({"kilo.model": "newapi/deepseek-v4-pro"}, dry=False)
+    assert any("model: 'newapi/gpt-5.6-terra' -> 'newapi/deepseek-v4-pro'" in d
+               for d in diffs)
+    assert any("models[deepseek-v4-pro]" in d for d in diffs)
+
+    after = json.loads(cfg.read_text())
+    assert after["model"] == "newapi/deepseek-v4-pro"
+    assert after["subagent_model"] == "newapi/deepseek-v4-pro"
+    assert after["small_model"] == "newapi/deepseek-v4-pro"
+    assert after["experimental"]["swe_pruner_model"] == "newapi/deepseek-v4-pro"
+    assert after["agent"]["code"]["model"] == "newapi/deepseek-v4-pro"
+    assert after["agent"]["ask"]["model"] == "newapi/deepseek-v4-pro"
+    assert "newapi/deepseek-v4-pro" in after["subagent_variant_overrides"]
+    reg = after["provider"]["newapi"]["models"]["deepseek-v4-pro"]
+    assert reg["name"] == "deepseek-v4-pro"
+    assert reg["modalities"]["output"] == ["text"]  # copied from old entry
+    assert after["provider"]["newapi"]["options"]["baseURL"] == "http://a/v1"
+    extra_mod.KiloAdapter.path = config.HOME / ".config" / "kilo" / "kilo.json"
+
+
+
     from ccse import config as cfg
     assert cfg.OS_NAME in ("linux", "darwin", "windows")
     # windows ⇔ no shell rc; posix ⇔ ~/.zshrc
@@ -297,29 +432,41 @@ def test_rewrite_dry_no_write(tmp_path):
 
 
 def test_prime_adapter(tmp_path, monkeypatch):
-    """Prime = Claude-Code-style settings.json under ~/.prime/agent."""
+    """Prime resolves model from settings.defaultModel + models.json provider
+    catalog, NOT the env.ANTHROPIC_MODEL block."""
     from ccse import prime as prime_mod
     settings = tmp_path / "settings.json"
     settings.write_text(json.dumps({
-        "env": {"ANTHROPIC_MODEL": "gpt-5.6-terra",
-                "CLAUDE_CODE_SUBAGENT_MODEL": "gpt-5.6-terra",
-                "ANTHROPIC_BASE_URL": "http://a"}}))
+        "defaultProvider": "newapi",
+        "defaultModel": "gpt-5.6-terra",
+        "recentModels": ["newapi/gpt-5.6-terra"],
+        "env": {"ANTHROPIC_MODEL": "gpt-5.6-terra"},  # inert for prime
+    }))
+    models = tmp_path / "models.json"
+    models.write_text(json.dumps({"providers": {"newapi": {
+        "baseUrl": "http://a", "apiKey": "OPENAI_API_KEY",
+        "models": [{"id": "gpt-5.6-terra", "name": "GPT-5.6 Terra"}]}}}))
     monkeypatch.setattr(prime_mod, "HOME", tmp_path, raising=False)
+    monkeypatch.setattr(prime_mod, "MODELS_JSON", models, raising=False)
     monkeypatch.setattr(config, "HOME", tmp_path, raising=False)
     prime_mod.PrimeAdapter.path = settings  # type: ignore[misc]
     a = prime_mod.PrimeAdapter()
     slots = {s.key: s for s in a.slots()}
-    assert slots["prime.model"].current == "gpt-5.6-terra"
+    assert slots["prime.default_model"].current == "gpt-5.6-terra"
     assert slots["prime.base_url"].current == "http://a"
-    assert a.primary == "prime.model"
-    assert a.follow == ("prime.model", "prime.subagent")
-    assert a.suffix == ""  # prime has no [1M] marker
-    diffs = a.apply({"prime.model": "deepseek-v4-flash",
-                     "prime.subagent": "deepseek-v4-flash"}, dry=False)
-    assert len(diffs) == 2
-    after = json.loads(settings.read_text())
-    assert after["env"]["ANTHROPIC_MODEL"] == "deepseek-v4-flash"
-    assert after["env"]["CLAUDE_CODE_SUBAGENT_MODEL"] == "deepseek-v4-flash"
+    assert slots["prime.api_key"].current == "OPENAI_API_KEY"
+    assert a.primary == "prime.default_model"
+    diffs = a.apply({"prime.default_model": "deepseek-v4-flash",
+                     "prime.base_url": "http://b"}, dry=False)
+    assert any("defaultModel" in d for d in diffs)
+    assert any("models[0].id" in d for d in diffs)
+    s_after = json.loads(settings.read_text())
+    assert s_after["defaultModel"] == "deepseek-v4-flash"
+    assert "newapi/deepseek-v4-flash" in s_after["recentModels"]
+    m_after = json.loads(models.read_text())
+    assert m_after["providers"]["newapi"]["models"][0]["id"] == "deepseek-v4-flash"
+    assert m_after["providers"]["newapi"]["models"][0]["name"] == "Deepseek V4 Flash"
+    assert m_after["providers"]["newapi"]["baseUrl"] == "http://b/v1"
     prime_mod.PrimeAdapter.path = config.HOME / ".prime" / "agent" / "settings.json"
 
 
@@ -362,6 +509,45 @@ def test_omp_adapter(tmp_path, monkeypatch):
     assert "defaultModel: deepseek-v4-flash" in text
     assert "default: local-openai/deepseek-v4-flash:xhigh" in text  # level kept
     assert 'apiKey: "${OPENAI_API_KEY}"' in text  # config keeps the var ref
+    extra_mod.OmpAdapter.path = config.HOME / ".omp" / "agent" / "config.yml"
+
+
+def test_omp_model_catalog_sync(tmp_path, monkeypatch):
+    """OMP keeps config.yml and models.yml local-openai model catalog in sync."""
+    try:
+        import ruamel.yaml  # noqa
+    except ImportError:
+        return
+    from ccse import extra as extra_mod
+    cfg = tmp_path / "config.yml"
+    models_yml = tmp_path / "models.yml"
+    cfg.write_text(
+        "llm:\n"
+        "  provider: openai\n"
+        "  baseUrl: http://192.168.0.14:6333/v1\n"
+        "  model: gpt-5.6-sol\n"
+        "  apiKey: \"${OPENAI_API_KEY}\"\n"
+        "defaultProvider: local-openai\n"
+        "defaultModel: gpt-5.6-sol\n"
+        "modelRoles:\n"
+        "  default: local-openai/gpt-5.6-sol:xhigh\n"
+        "providers:\n"
+        "  local-openai:\n"
+        "    models:\n"
+        "      - id: gpt-5.6-sol\n"
+        "        name: GPT 5.6 SOL\n", "utf-8")
+    models_yml.write_text(
+        "providers:\n"
+        "  local-openai:\n"
+        "    models:\n"
+        "      - id: gpt-5.6-sol\n"
+        "        name: GPT 5.6 SOL\n", "utf-8")
+    extra_mod.OmpAdapter.path = cfg  # type: ignore[misc]
+    a = extra_mod.OmpAdapter()
+    diffs = a.apply({"omp.model": "gpt-5.6-terra"}, dry=False)
+    assert any("models[0].id" in d for d in diffs)
+    assert "id: gpt-5.6-terra" in cfg.read_text("utf-8")
+    assert "id: gpt-5.6-terra" in models_yml.read_text("utf-8")
     extra_mod.OmpAdapter.path = config.HOME / ".omp" / "agent" / "config.yml"
 
 

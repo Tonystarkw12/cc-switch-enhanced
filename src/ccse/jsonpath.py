@@ -158,7 +158,8 @@ def _provider_of(d, primary_path: str) -> str | None:
 
 def make_adapter(adapter_id: str, name: str, path: Path, slot_paths: dict[str, str],
                  endpoint_paths: dict[str, str] | None = None,
-                 follow: tuple[str, ...] = ()):
+                 follow: tuple[str, ...] = (),
+                 base_url_v1: bool = False):
     """Build+register a JSON-path adapter. slot_paths: {slot_label: json_path}.
     The first key in slot_paths is treated as the adapter's primary slot (`--model`).
     Each label becomes both the human label and the profile key suffix
@@ -222,6 +223,10 @@ def make_adapter(adapter_id: str, name: str, path: Path, slot_paths: dict[str, s
                 p = _ep_path(label, d)
             if p is None:
                 continue
+            if base_url_v1 and label == KIND_BASE_URL:
+                # OpenAI SDK appends /chat/completions to baseUrl; a bare
+                # gateway root returns HTML, so normalize to .../v1.
+                val = config.ensure_openai_v1(val)
             rp = resolve_list_path(d, p)
             old = get_in_path(d, rp)
             if old != val:
