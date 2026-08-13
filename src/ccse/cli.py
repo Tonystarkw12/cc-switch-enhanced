@@ -160,17 +160,22 @@ def _apply_assignments(assignments: dict[str, str], *, dry: bool,
             })
 
     total = 0
+    skipped = 0
     for a in adapters:
+        if not a.available:
+            skipped += 1
+            continue
         diffs = a.apply(assignments, dry=dry)
         if diffs:
             print(f"[{a.id}] {a.name}")
             for line in diffs:
                 print(line)
             total += len(diffs)
-    print(f"\n{mode}: {total} field(s) changed across agents. "
-          f"{'(snapshot ' + stamp + ')'}" if not dry and total
-          else f"\n{mode}: {total} field(s) changed across agents.",
-          file=sys.stderr)
+    note = f" ({skipped} not-installed skipped)" if skipped else ""
+    summary = f"\n{mode}: {total} field(s) changed across agents.{note}"
+    if not dry and total:
+        summary += f"  (snapshot {stamp})"
+    print(summary, file=sys.stderr)
     if total == 0 and not dry:
         print("(already in sync — nothing written)", file=sys.stderr)
     elif not dry:
