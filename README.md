@@ -62,7 +62,7 @@ ccse profiles                      # 列已有 profile
 - `agent.slot = "name"`：`agent` 选 adapter，`slot` 选该 adapter 内字段。
 - profile 里省略的槽位**不动** → 可只切部分 agent。
 
-## adapter 对照（17 个）
+## adapter 对照（18 个）
 
 结构化配置文件（`--model` 改的字段 + `--base-url`/`--api-key` 改的字段）：
 
@@ -85,6 +85,7 @@ ccse profiles                      # 列已有 profile
 | `droid` | `~/.factory/settings.json` | JSON | `sessionDefaultSettings.model`（**模型 id**，非裸模型名） | 活动 `customModels[].baseUrl` | 活动 `customModels[].apiKey` |
 | `hermes` | `~/.hermes/config.yaml` | YAML | `model.default` | `model.base_url` | `model.api_key` |
 | `snow` | `~/.snow/config.json` | JSON | `snowcfg.advancedModel` (+`basicModel`) | `snowcfg.baseUrl` | `snowcfg.apiKey` |
+| `memmy` | `~/.memmy/config.yaml` | YAML | `agents.defaults.model` | 活动 provider `apiBase` | `apiKey` 的 `${ENV_VAR}` → 写入 shell rc / setx |
 
 env / shell-rc（模型名在 `~/.zshrc` 的 `export` 行）：
 
@@ -95,7 +96,7 @@ env / shell-rc（模型名在 `~/.zshrc` 的 `export` 行）：
 
 envrc 适配器只改它声明的那一行 `export VAR=...`（单引号转义，`glm-5.2[1M]` 这类含特殊字符的名字也安全），rc 文件里其它内容一字不动；snapshot/undo 同样覆盖 `~/.zshrc`。
 
-**api_key 的红点**：codex/grok/reasonix 不把 key 存明文配置，而是声明 `env_key` 环境变量名。`ccse --api-key K` 对它们：先把 key 字面量**写入 `~/.zshrc`**（`export NEWAPI_API_KEY='...'`，可被 undo 撤），再让配置继续指向该变量。`show`/`verify` 会解析这个环境变量名取当前 key。其余 agent 的 api_key 是明文配置字段，直接写文件。
+**api_key 的红点**：codex/grok/reasonix/memmy 不把 key 存明文配置，而是声明 `env_key`（或 `${ENV_VAR}`）环境变量名。`ccse --api-key K` 对它们：先把 key 字面量**写入 `~/.zshrc`**（`export NEWAPI_API_KEY='...'`，Windows 下用 `setx` 写用户环境；都可被 undo 撤），再让配置继续指向该变量。`show`/`verify` 会解析这个环境变量名取当前 key。其余 agent 的 api_key 是明文配置字段，直接写文件。
 
 **crush / droid 的坑**：
 - crush 的模型名在 `providers.json`（模型目录），凭据在 `crush.json`（`providers.<id>.base_url/api_key`）。`--model` 改的是**你在 `crush.json` 里配置的那个 provider** 的 `default_large_model_id`；`show` 会标出是哪个 provider。
@@ -169,7 +170,7 @@ pipx/uv 装一个 CLI，stdlib(`argparse`/`tomllib`/`json`/`urllib`)为主；第
 
 ## ROADMAP
 
-- [x] 17 adapter（claude/codex/opencode/gemini/qwen/cline + codebuddy/pi/openclaw/kilocode/reasonix/grok/forge/hermes/snow + kimi/copaw envrc）
+- [x] 18 adapter（claude/codex/opencode/gemini/qwen/cline + codebuddy/pi/openclaw/kilocode/reasonix/grok/forge/hermes/snow/crush/droid/memmy + kimi/copaw envrc）
 - [x] `--model NAME` 全量一键 + `--only`/`--exclude` + 保前缀 + claude 自动 `[1M]`
 - [x] `--base-url` / `--api-key` 全量一键（含 env 型写入 ~/.zshrc、env_key 解析）
 - [x] `apply`/`diff` 双模式 + profile 多槽位

@@ -12,6 +12,7 @@ Status legend:
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from . import config
@@ -632,4 +633,99 @@ class HermesAdapter:
             buf = StringIO()
             y.dump(doc, buf)
             config.write_text_atomic(self.path, buf.getvalue())
+
+
+def _env_name(ref: str | None) -> str:
+    """`${OPENAI_API_KEY}` -> OPENAI_API_KEY (fallback NEWAPI_API_KEY)."""
+    if ref and ref.startswith("${") and ref.endswith("}"):
+        return ref[2:-1]
+    return ref or "NEWAPI_API_KEY"
+
+
+@register
+class MemmyAdapter:
+    """Memmy ~/.memmy/config.yaml: agents.defaults.model + the active
+    provider's apiBase/apiKey. apiKey is an `${ENV_VAR}` reference; a bare
+    `--api-key K` persists the literal via ensure_env_var (shell rc / setx)
+    so the config keeps pointing at the var name."""
+    id = "memmy"
+    name = "Memmy"
+    primary = "memmy.model"
+    path = HOME / ".memmy" / "config.yaml"
+
+    @property
+    def available(self):
+        return self.path.exists()
+
+    def _provider(self, doc):
+        defaults = (doc.get("agents") or {}).get("defaults") or {}
+        pname = defaults.get("provider")
+        provs = doc.get("providers") or {}
+        prov = provs.get(pname) if pname else None
+        if not isinstance(prov, dict):
+            return pname, None
+        return pname, prov
+
+    def slots(self):
+        if not self.available:
+            return []
+        doc, _y = _load_yaml(self.path)
+        if doc is None:
+            return []
+        defaults = (doc.get("agents") or {}).get("defaults") or {}
+        out = [Slot(key="memmy.model", label="agents.defaults.model",
+                    current=defaults.get("model"))]
+        pname, prov = self._provider(doc)
+        if prov is not None:
+            out.append(Slot(key="memmy.base_url",
+                            label=f"providers.{pname}.apiBase",
+                            current=prov.get("apiBase"), kind=KIND_BASE_URL))
+            out.append(Slot(key="memmy.api_key",
+                            label=f"providers.{pname}.apiKey",
+                            current=prov.get("apiKey"), kind=KIND_API_KEY))
+        return out
+
+    def apply(self, assignments, dry=False):
+        relevant = {k[len("memmy."):]: v for k, v in assignments.items()
+                    if k.startswith("memmy.")}
+        if not relevant or not self.available:
+            return []
+        doc, y = _load_yaml(self.path)
+        if doc is None:
+            return [f"  (skip: ruamel.yaml unavailable)"]
+        defaults = doc.setdefault("agents", {}).setdefault("defaults", {})
+        diffs: list[str] = []
+        if "model" in relevant:
+            old = defaults.get("model")
+            if old != relevant["model"]:
+                diffs.append(f"  agents.defaults.model: {old!r} -> "
+                             f"{relevant['model']!r}")
+                if not dry:
+                    defaults["model"] = relevant["model"]
+        pname, prov = self._provider(doc)
+        if prov is not None:
+            if "base_url" in relevant:
+                old = prov.get("apiBase")
+                if old != relevant["base_url"]:
+                    diffs.append(f"  providers[{pname}].apiBase: {old!r} -> "
+                                 f"{relevant['base_url']!r}")
+                    if not dry:
+                        prov["apiBase"] = relevant["base_url"]
+            if "api_key" in relevant:
+                var = _env_name(prov.get("apiKey"))
+                old_key = os.environ.get(var)
+                if old_key != relevant["api_key"]:
+                    if not dry:
+                        from .envrc import ensure_env_var
+                        ensure_env_var(var, relevant["api_key"])
+                    diffs.append(f"  env {var}: {config.redact(old_key)!r} -> "
+                                 f"{config.redact(relevant['api_key'])!r}")
+        if not diffs:
+            return []
+        if not dry:
+            from io import StringIO
+            buf = StringIO()
+            y.dump(doc, buf)
+            config.write_text_atomic(self.path, buf.getvalue())
+        return diffs
         return diffs

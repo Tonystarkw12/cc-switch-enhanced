@@ -18,7 +18,8 @@ def test_registry_loads_all_targets():
     ids = {a.id for a in all_adapters()}
     for expect in ("claude", "codex", "opencode", "gemini", "qwen", "cline",
                    "codebuddy", "pi", "openclaw", "kilocode", "reasonix",
-                   "grok", "forge", "hermes", "snow", "crush", "droid"):
+                   "grok", "forge", "hermes", "snow", "crush", "droid",
+                   "memmy"):
         assert expect in ids, f"missing adapter {expect}"
 
 
@@ -201,6 +202,44 @@ def test_os_detection():
     assert (cfg.SHELL_RC is None) == (cfg.OS_NAME == "windows")
     if cfg.SHELL_RC is not None:
         assert cfg.SHELL_RC.name == ".zshrc"
+
+
+def test_memmy_adapter(tmp_path, monkeypatch):
+    """Memmy YAML: agents.defaults.model + active provider apiBase/apiKey.
+    apiKey is ${ENV_VAR}; --api-key persists literal via envrc, config keeps ref."""
+    from ccse import extra as extra_mod
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "agents:\n"
+        "  defaults:\n"
+        "    provider: openai\n"
+        "    model: gpt-5.6-terra\n"
+        "providers:\n"
+        "  openai:\n"
+        "    apiKey: ${NEWAPI_API_KEY}\n"
+        "    apiBase: http://192.168.0.14:6333/v1\n", "utf-8")
+    monkeypatch.setattr(extra_mod, "HOME", tmp_path, raising=False)
+    extra_mod.MemmyAdapter.path = cfg  # type: ignore[misc]
+    from ccse import envrc as envrc_mod
+    env_writes = []
+    monkeypatch.setattr(envrc_mod, "ensure_env_var",
+                        lambda var, val: env_writes.append((var, val)) or ("old", val),
+                        raising=False)
+    a = extra_mod.MemmyAdapter()
+    slots = {s.kind: s for s in a.slots()}
+    assert slots["model"].current == "gpt-5.6-terra"
+    assert slots["base_url"].current == "http://192.168.0.14:6333/v1"
+    assert slots["api_key"].current == "${NEWAPI_API_KEY}"
+    diffs = a.apply({"memmy.model": "glm-5.2",
+                     "memmy.base_url": "http://b/v1",
+                     "memmy.api_key": "sk-2"}, dry=False)
+    assert len(diffs) == 3
+    assert env_writes == [("NEWAPI_API_KEY", "sk-2")]  # literal persisted via envrc
+    text = cfg.read_text()
+    assert "model: glm-5.2" in text
+    assert "apiBase: http://b/v1" in text
+    assert "apiKey: ${NEWAPI_API_KEY}" in text  # config keeps the ref
+    extra_mod.MemmyAdapter.path = config.HOME / ".memmy" / "config.yaml"
 
 
 def test_keep_prefix_logic():
