@@ -242,6 +242,59 @@ def test_memmy_adapter(tmp_path, monkeypatch):
     extra_mod.MemmyAdapter.path = config.HOME / ".memmy" / "config.yaml"
 
 
+def test_rewrite_project(tmp_path):
+    """rewrite flips base/api/model across .env + env-read defaults; skips
+    noise dirs and non-LLM code."""
+    from ccse import rewrite
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "node_modules").mkdir()
+    (tmp_path / ".env").write_text(
+        "# comment\nOPENAI_MODEL=gpt-4o\nOPENAI_API_KEY=sk-old\n"
+        "OPENAI_BASE_URL=http://a/v1\n", "utf-8")
+    (tmp_path / "app.py").write_text(
+        'import os\n'
+        'model = os.getenv("OPENAI_MODEL", "gpt-4o")\n'
+        'key = os.getenv("OPENAI_API_KEY", "sk-old")\n'
+        'client = OpenAI(base_url=os.environ["OPENAI_BASE_URL"], api_key=key)\n'
+        'plain_model = keras.Model()\n', "utf-8")
+    (tmp_path / "ui.ts").write_text(
+        'const m = process.env.OPENAI_MODEL ?? "gpt-4o";\n'
+        'apiKey = "sk-old"\n'
+        'const unrelated = count ?? "gpt-4o";\n', "utf-8")
+    (tmp_path / ".git" / "config").write_text("OPENAI_MODEL=git\n", "utf-8")
+    (tmp_path / "node_modules" / "x.js").write_text("model=node\n", "utf-8")
+
+    rc = rewrite.run(tmp_path, {"model": "deepseek-v4-flash",
+                                "api_key": "sk-new",
+                                "base_url": "http://b/v1"}, dry=False)
+    assert rc == 0
+    env = (tmp_path / ".env").read_text()
+    assert "OPENAI_MODEL=deepseek-v4-flash" in env
+    assert "OPENAI_API_KEY=sk-new" in env
+    assert "OPENAI_BASE_URL=http://b/v1" in env
+    assert "# comment" in env
+    py = (tmp_path / "app.py").read_text()
+    assert 'os.getenv("OPENAI_MODEL", "deepseek-v4-flash")' in py
+    assert 'os.getenv("OPENAI_API_KEY", "sk-new")' in py
+    assert 'os.environ["OPENAI_BASE_URL"]' in py  # no-default read untouched
+    assert "plain_model = keras.Model()" in py  # non-LLM model= untouched
+    ts = (tmp_path / "ui.ts").read_text()
+    assert 'process.env.OPENAI_MODEL ?? "deepseek-v4-flash"' in ts
+    assert 'apiKey = "sk-new"' in ts
+    assert 'count ?? "gpt-4o"' in ts  # non-slot key untouched
+    # noise dirs untouched
+    assert (tmp_path / ".git" / "config").read_text() == "OPENAI_MODEL=git\n"
+    assert (tmp_path / "node_modules" / "x.js").read_text() == "model=node\n"
+
+
+def test_rewrite_dry_no_write(tmp_path):
+    """dry-run reports but writes nothing."""
+    from ccse import rewrite
+    (tmp_path / ".env").write_text("OPENAI_MODEL=gpt-4o\n", "utf-8")
+    rewrite.run(tmp_path, {"model": "x"}, dry=True)
+    assert (tmp_path / ".env").read_text() == "OPENAI_MODEL=gpt-4o\n"
+
+
 def test_keep_prefix_logic():
     """Bare model name keeps each adapter's route prefix; full name is verbatim."""
     from ccse import cli as cli_mod

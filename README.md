@@ -19,6 +19,8 @@ ccse undo                              # 撤回最近一次 apply
 ccse undo 20260812-132700              # 撤回指定快照
 ccse show                              # 看每个 agent 当前 model/base_url/api_key（★=主槽位）
 ccse list                              # 列已识别 adapter
+ccse rewrite ./myproj --model glm-5.2 --base-url U --api-key K   # 扫描项目改 LLM 配置
+ccse rewrite ./myproj --model glm-5.2 --dry   # 只预览不写盘
 ```
 
 `--model NAME` 只动每个 adapter 声明的**主槽位**（`show` 里带 ★ 的那一行）；`--base-url` / `--api-key` 动所有 `base_url` / `api_key` 槽位（`show` 里 kind 标识的）。profile 模式（下)可以指定任意多槽位。
@@ -126,6 +128,27 @@ Claude Code 的模型名带聚合端特有的上下文窗口标记（`glm-5.2[1M
 ccse verify --only claude,codex      # 只验证某些
 ccse verify --timeout 3              # 收紧超时（默认 8s）
 ```
+
+## rewrite — 项目内一键切 LLM 配置（与 agent 适配无关）
+
+`ccse rewrite <dir>` 递归扫描目录下 `.py/.ts/.js/.mjs/.cjs/.mts/.cts` 和 `.env*`，
+把 LLM 配置（base_url / api_key / model）替换成新值。适合你的脚本用环境变量或 `.env` 读
+LLM 凭据的场景——换一个聚合端，整个项目的端点一次切完。
+
+```
+ccse rewrite . --model deepseek-v4-flash --base-url http://b/v1 --api-key sk-x
+ccse rewrite ./worker --model glm-5.2 --dry      # 先预览
+```
+
+替换规则（保守，只碰 LLM 特征行）：
+- **.env\***：键名含 `BASE_URL` / `API_KEY` / `MODEL` 特征的行，直接换值（保留注释）。
+- **脚本**：`os.getenv("OPENAI_MODEL", "gpt-4o")` / `process.env.OPENAI_MODEL ?? "gpt-4o"`
+  这类**带默认值的 env 读取**，替换默认值；行首的 `api_key = "sk-..."` / `baseUrl: "..."`
+  字面量也替换。`os.environ["KEY"]`（无默认值）不动——值在 `.env`，那边已换。
+- 自动跳过 `.git` / `node_modules` / `.venv` / `dist` / `build` 等目录；普通
+  `model = keras.Model()` 这类非 LLM 代码不碰（`model` 字面量赋值只走 `.env`/env 默认值路径）。
+
+`--dry` 预览；无快照（改的是项目文件，靠 git 管）。三个字段任意组合，至少给一个。
 
 ## 撤回机制
 

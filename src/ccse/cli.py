@@ -528,7 +528,32 @@ def build_parser() -> argparse.ArgumentParser:
                     help="per-endpoint HTTP timeout in seconds (default 8)")
     pv.set_defaults(func=cmd_verify)
 
+    pr = sub.add_parser(
+        "rewrite", help="rewrite LLM base_url/api_key/model across a project "
+                        "dir (.py/.ts/.js/.env) — independent of agent adapters")
+    pr.add_argument("dir", nargs="?", default=".",
+                    help="project dir to scan (default: .)")
+    pr.add_argument("--base-url", metavar="URL", help="new base_url value")
+    pr.add_argument("--api-key", metavar="KEY", help="new api_key value")
+    pr.add_argument("--model", metavar="NAME", help="new model value")
+    pr.add_argument("--dry", action="store_true", help="preview only, write nothing")
+    pr.set_defaults(func=cmd_rewrite)
+
     return p
+
+
+def cmd_rewrite(args) -> int:
+    from . import rewrite
+    assignments = {}
+    if args.base_url:
+        assignments["base_url"] = args.base_url
+    if args.api_key:
+        assignments["api_key"] = args.api_key
+    if args.model:
+        assignments["model"] = args.model
+    if not assignments:
+        config.die("rewrite needs at least one of --base-url/--api-key/--model")
+    return rewrite.run(Path(args.dir), assignments, dry=args.dry)
 
 
 def main(argv: list[str] | None = None) -> int:
