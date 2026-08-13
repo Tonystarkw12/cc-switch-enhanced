@@ -12,7 +12,7 @@ import re
 from pathlib import Path
 
 from . import config
-from .registry import Slot, register
+from .registry import KIND_API_KEY, KIND_BASE_URL, KIND_MODEL, Slot, register
 
 _TOKEN = re.compile(r"([^.\[\]]+)|\[([^\]]*)\]")
 
@@ -146,13 +146,40 @@ def resolve_list_path(obj, path: str) -> str:
     return res
 
 
-def make_adapter(adapter_id: str, name: str, path: Path, slot_paths: dict[str, str]):
+def _provider_of(d, primary_path: str) -> str | None:
+    """Active provider name = prefix before '/' of the primary slot's value.
+    Used to resolve `{provider}` in endpoint paths (e.g. opencode/provider.X)."""
+    rp = resolve_list_path(d, primary_path)
+    v = get_in_path(d, rp)
+    if isinstance(v, str) and "/" in v:
+        return v.split("/", 1)[0]
+    return None
+
+
+def make_adapter(adapter_id: str, name: str, path: Path, slot_paths: dict[str, str],
+                 endpoint_paths: dict[str, str] | None = None):
     """Build+register a JSON-path adapter. slot_paths: {slot_label: json_path}.
     The first key in slot_paths is treated as the adapter's primary slot (`--model`).
     Each label becomes both the human label and the profile key suffix
-    (`adapter_id.label`)."""
+    (`adapter_id.label`).
+
+    endpoint_paths: optional {kind: json_path} for base_url/api_key slots.
+    A path may contain `{provider}`, resolved to the active provider name
+    (the prefix before '/' of the primary slot's value)."""
     paths = slot_paths
     primary = next(iter(paths))
+    ep = endpoint_paths or {}
+
+    def _ep_path(kind: str, d) -> str | None:
+        t = ep.get(kind)
+        if t is None:
+            return None
+        if "{provider}" in t:
+            prov = _provider_of(d, paths[primary])
+            if not prov:
+                return None
+            t = t.replace("{provider}", prov)
+        return t
 
     def slots(self):
         if not path.exists():
@@ -165,6 +192,16 @@ def make_adapter(adapter_id: str, name: str, path: Path, slot_paths: dict[str, s
             if cur is None or cur == "":
                 cur = None  # empty = unset (e.g. snow advancedModel="")
             out.append(Slot(key=f"{adapter_id}.{label}", label=label, current=cur))
+        for kind, label in ((KIND_BASE_URL, "base_url"), (KIND_API_KEY, "api_key")):
+            p = _ep_path(kind, d)
+            if p is None:
+                continue
+            rp = resolve_list_path(d, p)
+            cur = get_in_path(d, rp)
+            if cur == "":
+                cur = None
+            out.append(Slot(key=f"{adapter_id}.{label}", label=f"{label} ({p})",
+                            current=cur, kind=kind))
         return out
 
     def apply(self, assignments, dry=False):
@@ -175,13 +212,16 @@ def make_adapter(adapter_id: str, name: str, path: Path, slot_paths: dict[str, s
         d = config.load_json(path) or {}
         diffs = []
         for label, val in relevant.items():
-            if label not in paths:
+            p = paths.get(label)
+            if p is None and label in (KIND_BASE_URL, KIND_API_KEY):
+                p = _ep_path(label, d)
+            if p is None:
                 continue
-            rp = resolve_list_path(d, paths[label])
+            rp = resolve_list_path(d, p)
             old = get_in_path(d, rp)
             if old != val:
                 if set_in_path(d, rp, val):
-                    diffs.append(f"  {paths[label]}: {old!r} -> {val!r}")
+                    diffs.append(f"  {p}: {old!r} -> {val!r}")
         if diffs and not dry:
             config.keep_mode_write_json(path, d)
         return diffs

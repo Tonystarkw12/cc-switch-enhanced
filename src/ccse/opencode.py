@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from . import config
-from .registry import Adapter, Slot, register
+from .registry import KIND_API_KEY, KIND_BASE_URL, Adapter, Slot, register
 
 
 @register
@@ -16,6 +16,22 @@ class OpenCodeAdapter:
     def available(self) -> bool:
         return self.path.exists()
 
+    def _provider(self, d) -> str | None:
+        m = d.get("model")
+        if isinstance(m, str) and "/" in m:
+            return m.split("/", 1)[0]
+        return None
+
+    def _endpoint(self, d, kind):
+        """provider.<active>.options.<baseURL|apiKey>"""
+        prov = self._provider(d)
+        if not prov:
+            return None
+        p = (d.get("provider") or {}).get(prov) or {}
+        if kind == KIND_BASE_URL:
+            return (p.get("options") or {}).get("baseURL")
+        return (p.get("options") or {}).get("apiKey")
+
     def slots(self) -> list[Slot]:
         if not self.available:
             return []
@@ -27,6 +43,12 @@ class OpenCodeAdapter:
                 out.append(Slot(key=f"{self.id}.agent.{role}.model",
                                 label=f"agent.{role}.model",
                                 current=v.get("model")))
+        prov = self._provider(d)
+        if prov:
+            out.append(Slot(key=f"{self.id}.base_url", label=f"provider.{prov}.baseURL",
+                            current=self._endpoint(d, KIND_BASE_URL), kind=KIND_BASE_URL))
+            out.append(Slot(key=f"{self.id}.api_key", label=f"provider.{prov}.apiKey",
+                            current=self._endpoint(d, KIND_API_KEY), kind=KIND_API_KEY))
         return out
 
     def apply(self, assignments: dict[str, str], dry: bool) -> list[str]:
@@ -54,6 +76,19 @@ class OpenCodeAdapter:
                         diffs.append(f"  agent.{role}.model: {old!r} -> {val!r}")
                         if not dry:
                             agent["model"] = val
+        # endpoint slots
+        prov = self._provider(d)
+        if prov:
+            p = d.setdefault("provider", {}).setdefault(prov, {}).setdefault("options", {})
+            for key, field in ((f"{self.id}.base_url", "baseURL"),
+                               (f"{self.id}.api_key", "apiKey")):
+                if key in relevant:
+                    old = p.get(field)
+                    if old != relevant[key]:
+                        diffs.append(f"  provider.{prov}.options.{field}: {old!r} -> "
+                                     f"{relevant[key]!r}")
+                        if not dry:
+                            p[field] = relevant[key]
         if diffs and not dry:
             config.keep_mode_write_json(self.path, d)
         return diffs

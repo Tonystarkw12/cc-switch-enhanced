@@ -17,7 +17,7 @@ from pathlib import Path
 from . import config
 from .jsonpath import make_adapter
 from . import toml as tomlh
-from .registry import Slot, register
+from .registry import (KIND_API_KEY, KIND_BASE_URL, KIND_MODEL, Slot, register)
 
 HOME = config.HOME
 
@@ -60,10 +60,11 @@ make_adapter(
         "subagent.scout": "subagents.agentOverrides.scout.model",
         "subagent.worker": "subagents.agentOverrides.worker.model",
     },
+    endpoint_paths={"base_url": "llm.baseUrl", "api_key": "llm.apiKey"},
 )
 
 # OpenClaw: ~/.openclaw/openclaw.json — agents.defaults.model.primary +
-# subagents.model
+# subagents.model; endpoint under models.providers.<active> (dict, not list)
 make_adapter(
     "openclaw", "OpenClaw",
     HOME / ".openclaw" / "openclaw.json",
@@ -71,13 +72,22 @@ make_adapter(
         "primary": "agents.defaults.model.primary",
         "subagent": "agents.defaults.subagents.model",
     },
+    endpoint_paths={
+        "base_url": "models.providers.{provider}.baseUrl",
+        "api_key": "models.providers.{provider}.apiKey",
+    },
 )
 
-# KiloCode: ~/.kilocode/cli/config.json — providers[selected].apiModelId
+# KiloCode: ~/.kilocode/cli/config.json — providers[selected].apiModelId +
+# openAiBaseUrl/openAiApiKey
 make_adapter(
     "kilocode", "KiloCode",
     HOME / ".kilocode" / "cli" / "config.json",
     {"apiModelId": "providers[newapi].apiModelId"},
+    endpoint_paths={
+        "base_url": "providers[newapi].openAiBaseUrl",
+        "api_key": "providers[newapi].openAiApiKey",
+    },
 )
 
 # Snow: ~/.snow/config.json — snowcfg.advancedModel (main model; snow falls
@@ -87,6 +97,7 @@ make_adapter(
     HOME / ".snow" / "config.json",
     {"advancedModel": "snowcfg.advancedModel",
      "basicModel": "snowcfg.basicModel"},
+    endpoint_paths={"base_url": "snowcfg.baseUrl", "api_key": "snowcfg.apiKey"},
 )
 
 
@@ -121,14 +132,22 @@ class ReasonixAdapter:
             return []
         def_model = d.get("default_model")
         cur = None
-        for prov in d.get("providers", []) or []:
-            if prov.get("name") == def_model:
-                cur = prov.get("model")
+        prov = None
+        for p in d.get("providers", []) or []:
+            if p.get("name") == def_model:
+                prov = p
+                cur = p.get("model")
                 break
-        return [
+        out = [
             Slot(key="reasonix.model", label="active-provider model", current=cur),
             Slot(key="reasonix.default_model", label="default_model", current=def_model),
         ]
+        if prov is not None:
+            out.append(Slot(key="reasonix.base_url", label="active-provider base_url",
+                            current=prov.get("base_url"), kind=KIND_BASE_URL))
+            out.append(Slot(key="reasonix.api_key", label="active-provider api_key_env",
+                            current=prov.get("api_key_env"), kind=KIND_API_KEY))
+        return out
 
     def apply(self, assignments, dry=False):
         relevant = {k[len("reasonix.") + 0:]: v for k, v in assignments.items()
@@ -139,24 +158,38 @@ class ReasonixAdapter:
         if d is None:
             return [f"  (skip: tomlkit unavailable)"]
         diffs: list[str] = []
-        if "model" in relevant:
-            dmod = d.get("default_model")
-            for prov in (d.get("providers", None) or []):
-                if prov.get("name") == dmod:
-                    old = prov.get("model")
-                    if old != relevant["model"]:
-                        diffs.append(
-                            f"  providers[{dmod}].model: {old!r} -> {relevant['model']!r}")
-                        if not dry:
-                            prov["model"] = relevant["model"]
-                    break
-        if "default_model" in relevant:
-            old = d.get("default_model")
-            if old != relevant["default_model"]:
-                diffs.append(
-                    f"  default_model: {old!r} -> {relevant['default_model']!r}")
+        dmod = d.get("default_model")
+        prov = None
+        for p in (d.get("providers", None) or []):
+            if p.get("name") == dmod:
+                prov = p
+                break
+        if prov is not None:
+            if "model" in relevant and prov.get("model") != relevant["model"]:
+                diffs.append(f"  providers[{dmod}].model: {prov.get('model')!r} -> "
+                             f"{relevant['model']!r}")
                 if not dry:
-                    d["default_model"] = relevant["default_model"]
+                    prov["model"] = relevant["model"]
+            if "base_url" in relevant and prov.get("base_url") != relevant["base_url"]:
+                diffs.append(f"  providers[{dmod}].base_url: {prov.get('base_url')!r} -> "
+                             f"{relevant['base_url']!r}")
+                if not dry:
+                    prov["base_url"] = relevant["base_url"]
+            if "api_key" in relevant:
+                var = prov.get("api_key_env") or "NEWAPI_API_KEY"
+                import os
+                old_key = os.environ.get(var)
+                if old_key != relevant["api_key"]:
+                    if not dry:
+                        from .envrc import ensure_env_var
+                        ensure_env_var(var, relevant["api_key"])
+                    diffs.append(f"  env {var} (zshrc): {config.redact(old_key)!r} -> "
+                                 f"{config.redact(relevant['api_key'])!r}")
+        if "default_model" in relevant and d.get("default_model") != relevant["default_model"]:
+            diffs.append(f"  default_model: {d.get('default_model')!r} -> "
+                         f"{relevant['default_model']!r}")
+            if not dry:
+                d["default_model"] = relevant["default_model"]
         if diffs and not dry:
             text = tomlh.dump_toml(d)
             config.write_text_atomic(self.path, text)
@@ -187,36 +220,75 @@ class GrokAdapter:
         if d is None:
             return []
         cur = d.get("models", {}).get("default") if "models" in d else None
-        return [Slot(key="grok.model", label="models.default", current=cur)]
+        out = [Slot(key="grok.model", label="models.default", current=cur)]
+        if cur:
+            mtab = d.get("model") or {}
+            blk = mtab.get(cur) if isinstance(mtab, dict) else None
+            out.append(Slot(key="grok.base_url", label=f"model[{cur}].base_url",
+                            current=blk.get("base_url") if blk else None,
+                            kind=KIND_BASE_URL))
+            out.append(Slot(key="grok.api_key", label=f"model[{cur}].env_key",
+                            current=blk.get("env_key") if blk else None,
+                            kind=KIND_API_KEY))
+        return out
 
     def apply(self, assignments, dry=False):
-        val = assignments.get("grok.model")
-        if val is None or not self.available:
+        relevant = {k[len("grok."):]: v for k, v in assignments.items()
+                    if k.startswith("grok.")}
+        if not relevant or not self.available:
             return []
         d = self._doc()
         if d is None:
             return [f"  (skip: tomlkit unavailable)"]
         models = d.get("models")
-        old = models.get("default") if models is not None else None
-        if old == val:
-            return []
-        diffs = [f"  models.default: {old!r} -> {val!r}"]
-        if not dry:
-            if "models" not in d:
+        cur = models.get("default") if models is not None else None
+        diffs: list[str] = []
+        if "model" in relevant and cur != relevant["model"]:
+            diffs.append(f"  models.default: {cur!r} -> {relevant['model']!r}")
+            if not dry:
+                if "models" not in d:
+                    import tomlkit
+                    d["models"] = tomlkit.table()
+                d["models"]["default"] = relevant["model"]
+                cur = relevant["model"]
+        # ensure [model."<cur>"] table exists (model.apply ensures it too)
+        if cur and "base_url" in relevant:
+            mtab = d.get("model")
+            blk = mtab.get(cur) if isinstance(mtab, dict) else None
+            if blk is None:
                 import tomlkit
-                d["models"] = tomlkit.table()
-            d["models"]["default"] = val
-            # ensure [model."<val>"] block with model=<val> if missing
-            mtab = d.get("model", None)
-            if mtab is None or val not in mtab:
+                if mtab is None or not isinstance(mtab, dict):
+                    mtab = tomlkit.table()
+                    d["model"] = mtab
+                blk = tomlkit.table()
+                blk["model"] = cur
+                mtab[cur] = blk
+            if blk.get("base_url") != relevant["base_url"]:
+                diffs.append(f"  model[{cur}].base_url: {blk.get('base_url')!r} -> "
+                             f"{relevant['base_url']!r}")
+                if not dry:
+                    blk["base_url"] = relevant["base_url"]
+        if cur and "api_key" in relevant:
+            import os
+            mtab = d.get("model")
+            blk = mtab.get(cur) if isinstance(mtab, dict) else None
+            if blk is None:
                 import tomlkit
-                if mtab is None:
-                    d["model"] = tomlkit.table()
-                    mtab = d["model"]
-                if val not in mtab:
-                    sub = tomlkit.table()
-                    sub["model"] = val
-                    mtab[val] = sub
+                if mtab is None or not isinstance(mtab, dict):
+                    mtab = tomlkit.table()
+                    d["model"] = mtab
+                blk = tomlkit.table()
+                blk["model"] = cur
+                mtab[cur] = blk
+            var = blk.get("env_key") or "NEWAPI_API_KEY"
+            old_key = os.environ.get(var)
+            if old_key != relevant["api_key"]:
+                if not dry:
+                    from .envrc import ensure_env_var
+                    ensure_env_var(var, relevant["api_key"])
+                diffs.append(f"  env {var} (zshrc): {config.redact(old_key)!r} -> "
+                             f"{config.redact(relevant['api_key'])!r}")
+        if diffs and not dry:
             text = tomlh.dump_toml(d)
             config.write_text_atomic(self.path, text)
         return diffs
@@ -224,12 +296,16 @@ class GrokAdapter:
 
 @register
 class ForgeAdapter:
-    """Forge ~/.forge/.forge.toml: [session] model_id (and provider_id).
-    Slot `model` sets session.model_id."""
+    """Forge ~/.forge/.forge.toml [session] + ~/.forge/.credentials.json.
+
+    Model = session.model_id; active provider = session.provider_id; its
+    base_url/api_key live on the matching entry in credentials.json
+    (url_params.OPENAI_URL / auth_details.api_key)."""
     id = "forge"
     name = "Forge"
     primary = "forge.model"
     path = HOME / ".forge" / ".forge.toml"
+    _creds_path = HOME / ".forge" / ".credentials.json"
 
     @property
     def available(self):
@@ -238,18 +314,55 @@ class ForgeAdapter:
     def _doc(self):
         return tomlh.load_toml_editable(self.path)
 
+    def _creds(self):
+        if not self._creds_path.exists():
+            return None
+        try:
+            return config.load_json(self._creds_path)
+        except Exception:
+            return None
+
+    def _active_provider(self):
+        d = self._doc()
+        if d is None:
+            return None, None
+        return (d.get("session") or {}).get("provider_id"), d
+
+    def _provider_entry(self, pid):
+        creds = self._creds()
+        if not isinstance(creds, list):
+            return None
+        for c in creds:
+            if isinstance(c, dict) and c.get("id") == pid:
+                return c
+        return None
+
     def slots(self):
         if not self.available:
             return []
         d = self._doc()
         if d is None:
             return []
-        cur = d.get("session", {}).get("model_id") if "session" in d else None
-        return [Slot(key="forge.model", label="session.model_id", current=cur)]
+        sess = d.get("session") or {}
+        cur = sess.get("model_id")
+        out = [Slot(key="forge.model", label="session.model_id", current=cur)]
+        pid = sess.get("provider_id")
+        if pid:
+            entry = self._provider_entry(pid)
+            url = (entry.get("url_params") or {}).get("OPENAI_URL") \
+                if entry else None
+            key = (entry.get("auth_details") or {}).get("api_key") \
+                if entry else None
+            out.append(Slot(key="forge.base_url", label=f"providers.{pid}.OPENAI_URL",
+                            current=url, kind=KIND_BASE_URL))
+            out.append(Slot(key="forge.api_key", label=f"providers.{pid}.api_key",
+                            current=key, kind=KIND_API_KEY))
+        return out
 
     def apply(self, assignments, dry=False):
-        val = assignments.get("forge.model")
-        if val is None or not self.available:
+        relevant = {k[len("forge."):]: v for k, v in assignments.items()
+                    if k.startswith("forge.")}
+        if not relevant or not self.available:
             return []
         d = self._doc()
         if d is None:
@@ -257,17 +370,205 @@ class ForgeAdapter:
         sess = d.get("session")
         if sess is None:
             return [f"  (skip: no [session] table)"]
-        old = sess.get("model_id")
-        if old == val:
-            return []
+        diffs: list[str] = []
+        if "model" in relevant:
+            old = sess.get("model_id")
+            if old != relevant["model"]:
+                diffs.append(f"  session.model_id: {old!r} -> {relevant['model']!r}")
+                if not dry:
+                    sess["model_id"] = relevant["model"]
+        pid = sess.get("provider_id")
+        creds = self._creds()
+        entry = next((c for c in creds if isinstance(c, dict) and c.get("id") == pid),
+                     None) if isinstance(creds, list) else None
+        creds_dirty = False
+        if pid and entry is not None:
+            for key, section, field in (
+                    ("base_url", "url_params", "OPENAI_URL"),
+                    ("api_key", "auth_details", "api_key")):
+                if key not in relevant:
+                    continue
+                sec = entry.setdefault(section, {})
+                old = sec.get(field)
+                if old != relevant[key]:
+                    diffs.append(f"  providers.{pid}.{section}.{field}: "
+                                 f"{config.redact(old)!r} -> "
+                                 f"{config.redact(relevant[key])!r}")
+                    if not dry:
+                        sec[field] = relevant[key]
+                        creds_dirty = True
         if not dry:
-            sess["model_id"] = val
-            text = tomlh.dump_toml(d)
-            config.write_text_atomic(self.path, text)
-        return [f"  session.model_id: {old!r} -> {val!r}"]
+            if creds_dirty and isinstance(creds, list):
+                config.keep_mode_write_json(self._creds_path, creds)
+            if "model" in relevant:
+                text = tomlh.dump_toml(d)
+                config.write_text_atomic(self.path, text)
+        return diffs
 
 
 # ───────────────────────── YAML adapter — Hermes ────────────────────────
+
+@register
+class CrushAdapter:
+    """Crush ~/.config/crush/crush.json (credentials) +
+    ~/.local/share/crush/providers.json (model catalog).
+
+    crush.json declares the providers in use (id + base_url + api_key);
+    providers.json holds each provider's model list + default_large_model_id.
+    Model slot = default_large_model_id of the first configured provider."""
+    id = "crush"
+    name = "Crush"
+    primary = "crush.model"
+    path = HOME / ".config" / "crush" / "crush.json"
+
+    @property
+    def available(self):
+        return self.path.exists() and self._providers_path().exists()
+
+    def _providers_path(self):
+        return HOME / ".local" / "share" / "crush" / "providers.json"
+
+    def _configured_provider(self):
+        d = config.load_json(self.path) or {}
+        provs = d.get("providers") or {}
+        if isinstance(provs, dict):
+            for pid, pconf in provs.items():
+                if isinstance(pconf, dict):
+                    return pid, pconf
+        return None, None
+
+    def _provider_entry(self, pid):
+        c = config.load_json(self._providers_path())
+        if not isinstance(c, list):
+            return None
+        for p in c:
+            if isinstance(p, dict) and p.get("id") == pid:
+                return p
+        return None
+
+    def slots(self):
+        if not self.available:
+            return []
+        pid, pconf = self._configured_provider()
+        if not pid:
+            return []
+        entry = self._provider_entry(pid)
+        out = [Slot(key="crush.model",
+                    label=f"providers[{pid}].default_large_model_id",
+                    current=entry.get("default_large_model_id") if entry else None)]
+        out.append(Slot(key="crush.base_url", label=f"providers.{pid}.base_url",
+                        current=pconf.get("base_url"), kind=KIND_BASE_URL))
+        out.append(Slot(key="crush.api_key", label=f"providers.{pid}.api_key",
+                        current=pconf.get("api_key"), kind=KIND_API_KEY))
+        return out
+
+    def apply(self, assignments, dry=False):
+        relevant = {k[len("crush."):]: v for k, v in assignments.items()
+                    if k.startswith("crush.")}
+        if not relevant or not self.available:
+            return []
+        pid, pconf = self._configured_provider()
+        if not pid:
+            return []
+        diffs: list[str] = []
+        model_written = False
+        if "model" in relevant:
+            cat = config.load_json(self._providers_path())
+            entry = next((p for p in cat if isinstance(p, dict) and p.get("id") == pid),
+                         None) if isinstance(cat, list) else None
+            if entry is None:
+                diffs.append(f"  (skip: provider {pid!r} not in providers.json)")
+            else:
+                old = entry.get("default_large_model_id")
+                if old != relevant["model"]:
+                    diffs.append(f"  providers[{pid}].default_large_model_id: {old!r} -> "
+                                 f"{relevant['model']!r}")
+                    if not dry:
+                        entry["default_large_model_id"] = relevant["model"]
+                        config.keep_mode_write_json(self._providers_path(), cat)
+                        model_written = True
+        d = config.load_json(self.path) or {}
+        provs = d.setdefault("providers", {})
+        p = provs.setdefault(pid, {})
+        ep_dirty = False
+        for key, field in (("base_url", "base_url"), ("api_key", "api_key")):
+            if key in relevant:
+                old = p.get(field)
+                if old != relevant[key]:
+                    diffs.append(f"  providers.{pid}.{field}: {old!r} -> {relevant[key]!r}")
+                    if not dry:
+                        p[field] = relevant[key]
+                        ep_dirty = True
+        if ep_dirty and not dry:
+            config.keep_mode_write_json(self.path, d)
+        return diffs
+
+
+@register
+class DroidAdapter:
+    """Droid (Factory) ~/.factory/settings.json.
+
+    sessionDefaultSettings.model = active model id (composite like
+    custom:glm-4.7-...-0). base_url/api_key live on the matching customModels[]
+    entry (the model id is not a bare model name — see show)."""
+    id = "droid"
+    name = "Droid"
+    primary = "droid.model"
+    path = HOME / ".factory" / "settings.json"
+
+    @property
+    def available(self):
+        return self.path.exists()
+
+    def _active_custom(self, d):
+        m = (d.get("sessionDefaultSettings") or {}).get("model")
+        for cm in d.get("customModels") or []:
+            if isinstance(cm, dict) and cm.get("id") == m:
+                return m, cm
+        return m, None
+
+    def slots(self):
+        if not self.available:
+            return []
+        d = config.load_json(self.path) or {}
+        m, cm = self._active_custom(d)
+        out = [Slot(key="droid.model", label="sessionDefaultSettings.model",
+                    current=m)]
+        if cm is not None:
+            out.append(Slot(key="droid.base_url", label="active customModel.baseUrl",
+                            current=cm.get("baseUrl"), kind=KIND_BASE_URL))
+            out.append(Slot(key="droid.api_key", label="active customModel.apiKey",
+                            current=cm.get("apiKey"), kind=KIND_API_KEY))
+        return out
+
+    def apply(self, assignments, dry=False):
+        relevant = {k[len("droid."):]: v for k, v in assignments.items()
+                    if k.startswith("droid.")}
+        if not relevant or not self.available:
+            return []
+        d = config.load_json(self.path) or {}
+        sds = d.setdefault("sessionDefaultSettings", {})
+        diffs: list[str] = []
+        if "model" in relevant:
+            old = sds.get("model")
+            if old != relevant["model"]:
+                diffs.append(f"  sessionDefaultSettings.model: {old!r} -> {relevant['model']!r}")
+                if not dry:
+                    sds["model"] = relevant["model"]
+        m, cm = self._active_custom(d)
+        if cm is not None:
+            for key, field in (("base_url", "baseUrl"), ("api_key", "apiKey")):
+                if key in relevant:
+                    old = cm.get(field)
+                    if old != relevant[key]:
+                        diffs.append(f"  customModels[id={m}].{field}: {old!r} -> "
+                                     f"{relevant[key]!r}")
+                        if not dry:
+                            cm[field] = relevant[key]
+        if diffs and not dry:
+            config.keep_mode_write_json(self.path, d)
+        return diffs
+
 
 @register
 class HermesAdapter:
@@ -289,25 +590,46 @@ class HermesAdapter:
         if doc is None:
             return []
         m = doc.get("model", {})
-        cur = m.get("default") if isinstance(m, dict) else None
-        return [Slot(key="hermes.model", label="model.default", current=cur)]
+        out = []
+        if isinstance(m, dict):
+            out.append(Slot(key="hermes.model", label="model.default",
+                            current=m.get("default")))
+            if m.get("base_url"):
+                out.append(Slot(key="hermes.base_url", label="model.base_url",
+                                current=m.get("base_url"), kind=KIND_BASE_URL))
+            if m.get("api_key"):
+                out.append(Slot(key="hermes.api_key", label="model.api_key",
+                                current=m.get("api_key"), kind=KIND_API_KEY))
+        return out
 
     def apply(self, assignments, dry=False):
-        val = assignments.get("hermes.model")
-        if val is None or not self.available:
+        relevant = {k[len("hermes."):]: v for k, v in assignments.items()
+                    if k.startswith("hermes.")}
+        if not relevant or not self.available:
             return []
         doc, y = _load_yaml(self.path)
         if doc is None:
             return [f"  (skip: ruamel.yaml unavailable)"]
         if "model" not in doc or not isinstance(doc["model"], dict):
             return [f"  (skip: no model section)"]
-        old = doc["model"].get("default")
-        if old == val:
+        diffs: list[str] = []
+        m = doc["model"]
+        for label, field in (("model", "default"), ("base_url", "base_url"),
+                             ("api_key", "api_key")):
+            if label not in relevant:
+                continue
+            old = m.get(field)
+            if old == relevant[label]:
+                continue
+            diffs.append(f"  model.{field}: {config.redact(old)!r} -> "
+                         f"{config.redact(relevant[label])!r}")
+            if not dry:
+                m[field] = relevant[label]
+        if not diffs:
             return []
         if not dry:
-            doc["model"]["default"] = val
             from io import StringIO
             buf = StringIO()
             y.dump(doc, buf)
             config.write_text_atomic(self.path, buf.getvalue())
-        return [f"  model.default: {old!r} -> {val!r}"]
+        return diffs

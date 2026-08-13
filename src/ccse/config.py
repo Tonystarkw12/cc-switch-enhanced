@@ -15,6 +15,16 @@ DATA_DIR = Path.home() / ".ccse"
 HISTORY_INDEX = DATA_DIR / "history.jsonl"
 SNAPSHOT_DIR = DATA_DIR / "snapshots"
 
+# --- OS detection ---------------------------------------------------------
+# Agent config paths are all `~/<dotdir>/...` and Path.home() resolves them on
+# every OS, so the only platform-specific surface is env-var persistence:
+# posix writes `export VAR=...` into a shell rc (~/.zshrc on linux/mac, where
+# zsh is the default shell); windows has no shell rc and persists to the user
+# environment via `setx`.
+OS_NAME = ("windows" if sys.platform == "win32"
+           else "darwin" if sys.platform == "darwin" else "linux")
+SHELL_RC: Path | None = None if OS_NAME == "windows" else HOME / ".zshrc"
+
 
 def detect_tomli_w():
     try:

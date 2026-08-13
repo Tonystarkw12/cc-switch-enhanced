@@ -7,14 +7,26 @@ from typing import Protocol
 
 REGISTRY: dict[str, type] = {}
 
+# slot kinds
+KIND_MODEL = "model"
+KIND_BASE_URL = "base_url"
+KIND_API_KEY = "api_key"
+
 
 @dataclass
 class Slot:
-    """A single mutable model-name field within an adapter."""
+    """A single mutable field within an adapter.
 
-    key: str  # dotted path as it appears in profiles.toml, e.g. "model", "claude.haiku"
-    label: str  # human label shown by `show`
-    current: str | None  # detected current value, None if unset/agent absent
+    key: dotted path as it appears in profiles.toml, e.g. "model", "claude.haiku"
+    label: human label shown by `show`
+    current: detected current value, None if unset/agent absent
+    kind: model | base_url | api_key — which `--X` flag targets it
+    """
+
+    key: str
+    label: str
+    current: str | None
+    kind: str = KIND_MODEL
 
 
 class Adapter(Protocol):

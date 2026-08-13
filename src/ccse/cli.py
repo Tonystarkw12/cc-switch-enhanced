@@ -1,19 +1,27 @@
-"""`ccse` CLI: show / list / apply / genprofile / profiles / diff / undo / history.
+"""`ccse` CLI: show / list / apply / genprofile / profiles / diff / undo /
+history / verify.
 
-Primary UX: `ccse --model "glm-5.2"` switches every agent's primary model slot
-in one shot. `ccse undo` reverts the last apply (snapshots in ~/.ccse/snapshots)."""
+Primary UX: `ccse --model "glm-5.2" --base-url URL --api-key KEY` switches
+every agent's model slot, endpoint and key in one shot. `ccse undo` reverts
+the last apply (snapshots in ~/.ccse/snapshots). `ccse verify` probes every
+agent's configured endpoint to confirm the switch still works."""
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import tomllib
 from datetime import datetime
 from pathlib import Path
 
 from . import config
-from .registry import all_adapters
+from .registry import KIND_API_KEY, KIND_BASE_URL, KIND_MODEL, all_adapters
 
 PROFILES_PATH = config.HOME / ".ccse" / "profiles.toml"
+
+# adapters whose api_key is an env-var reference and get the literal written to
+# the shell rc / user env (codex/grok/reasonix). verify must snapshot that file too.
+_ENV_KEY_ADAPTERS = ("codex", "grok", "reasonix")
 
 
 def _load_adapters():
@@ -50,7 +58,8 @@ def _filter_adapters(adapters, only: str | None, exclude: str | None):
 
 def cmd_list(_args) -> int:
     adapters = _load_adapters()
-    print(f"{'adapter':<12} {'name':<16} {'avail':<5} path")
+    rc = str(config.SHELL_RC) if config.SHELL_RC else "user env (setx)"
+    print(f"{'adapter':<12} {'name':<16} {'avail':<5} path   [os={config.OS_NAME}, env={rc}]")
     for a in adapters:
         print(f"{a.id:<12} {a.name:<16} {'✓' if a.available else '—':<5} {a.path}")
     return 0
@@ -67,6 +76,8 @@ def cmd_show(args) -> int:
         print(head)
         for s in slots:
             cur = s.current if s.current is not None else "<unset>"
+            if s.kind == KIND_API_KEY and s.current is not None:
+                cur = config.redact(s.current)
             mark = " ★" if s.key == _primary_key(a) else ""
             print(f"  {s.label:<28} = {cur}{mark}")
         any_slot = True
@@ -121,10 +132,19 @@ def _apply_assignments(assignments: dict[str, str], *, dry: bool,
     mode = "dry-run" if dry else "applied"
 
     # snapshot before writing (all in-scope installed files, deduped — envrc
-    # adapters may share ~/.zshrc)
+    # adapters may share the shell rc). Env-key adapters write their api_key
+    # literal into the shell rc (posix), so that file is in scope whenever an
+    # api_key is assigned.
     if not dry:
         touched: list[Path] = []
         seen: set[Path] = set()
+        writes_zshrc = any(a.id in _ENV_KEY_ADAPTERS for a in adapters)
+        has_api_key = any(k.endswith(".api_key") for k in assignments)
+        if writes_zshrc and has_api_key and config.SHELL_RC is not None:
+            z = config.SHELL_RC
+            if z not in seen and z.exists():
+                seen.add(z)
+                touched.append(z)
         for a in adapters:
             if a.path.exists() and a.path not in seen:
                 seen.add(a.path)
@@ -196,32 +216,66 @@ def _model_assignments(name: str, only, exclude, keep_prefix: bool = True) -> di
     return out
 
 
+def _endpoint_assignments(kind: str, value: str, only, exclude) -> dict[str, str]:
+    """Build {slot_key: value} for every adapter slot of the given kind
+    (base_url | api_key) in scope."""
+    adapters = _filter_adapters(_load_adapters(), only, exclude)
+    out: dict[str, str] = {}
+    for a in adapters:
+        if not a.available:
+            continue
+        for s in a.slots():
+            if s.kind == kind:
+                out[s.key] = value
+    return out
+
+
 def cmd_apply(args) -> int:
+    assignments: dict[str, str] = {}
+    tags: list[str] = []
     if args.model is not None:
-        assignments = _model_assignments(args.model, args.only, args.exclude,
-                                         keep_prefix=not args.no_keep_prefix)
-        tag = f"--model {args.model}" + ("" if not args.no_keep_prefix else " (raw)")
+        assignments.update(_model_assignments(
+            args.model, args.only, args.exclude,
+            keep_prefix=not args.no_keep_prefix))
+        tags.append(f"--model {args.model}" + ("" if not args.no_keep_prefix else " (raw)"))
     elif args.profile:
-        assignments = _resolve_profile(args.profile)
-        tag = f"profile {args.profile}"
+        assignments.update(_resolve_profile(args.profile))
+        tags.append(f"profile {args.profile}")
     else:
-        config.die("apply needs either --model NAME or a PROFILE name")
+        config.die("apply needs --model NAME, --base-url/--api-key, or a PROFILE name")
+    if getattr(args, "base_url", None):
+        assignments.update(_endpoint_assignments(
+            KIND_BASE_URL, args.base_url, args.only, args.exclude))
+        tags.append(f"--base-url {args.base_url}")
+    if getattr(args, "api_key", None):
+        assignments.update(_endpoint_assignments(
+            KIND_API_KEY, args.api_key, args.only, args.exclude))
+        tags.append("--api-key <redacted>")
+    if not assignments:
+        config.die("nothing to do")
     return _apply_assignments(assignments, dry=False, no_backup=args.no_backup,
-                              only=args.only, exclude=args.exclude, tag=tag)
+                              only=args.only, exclude=args.exclude,
+                              tag=", ".join(tags))
 
 
 def cmd_diff(args) -> int:
+    assignments: dict[str, str] = {}
     if args.model is not None:
-        assignments = _model_assignments(args.model, args.only, args.exclude,
-                                         keep_prefix=not args.no_keep_prefix)
-        tag = f"--model {args.model}" + ("" if not args.no_keep_prefix else " (raw)")
+        assignments.update(_model_assignments(
+            args.model, args.only, args.exclude,
+            keep_prefix=not args.no_keep_prefix))
     elif args.profile:
-        assignments = _resolve_profile(args.profile)
-        tag = f"profile {args.profile}"
-    else:
-        config.die("diff needs either --model NAME or a PROFILE name")
+        assignments.update(_resolve_profile(args.profile))
+    if getattr(args, "base_url", None):
+        assignments.update(_endpoint_assignments(
+            KIND_BASE_URL, args.base_url, args.only, args.exclude))
+    if getattr(args, "api_key", None):
+        assignments.update(_endpoint_assignments(
+            KIND_API_KEY, args.api_key, args.only, args.exclude))
+    if not assignments:
+        config.die("diff needs --model, --base-url/--api-key, or a PROFILE name")
     return _apply_assignments(assignments, dry=True, no_backup=True,
-                              only=args.only, exclude=args.exclude, tag=tag)
+                              only=args.only, exclude=args.exclude, tag="diff")
 
 
 def cmd_genprofile(args) -> int:
@@ -301,11 +355,101 @@ def cmd_undo(args) -> int:
     return 0
 
 
+# ---- verify --------------------------------------------------------------
+
+def _resolve_key(slot_current: str | None) -> str | None:
+    """An api_key slot may hold a literal key or the NAME of an env var
+    (codex/grok/reasonix store env_key). Resolve env-var names to their value."""
+    if slot_current and slot_current.isidentifier() and slot_current in os.environ:
+        return os.environ[slot_current]
+    return slot_current
+
+
+def _probe_endpoint(base: str, key: str | None, model: str | None,
+                    timeout: int = 8) -> tuple[str, str]:
+    """OpenAI-style GET {base}/models. Returns (status, message):
+    PASS / WARN (model not listed) / FAIL."""
+    import json
+    import socket
+    import ssl
+    import urllib.error
+    import urllib.request
+
+    url = base.rstrip("/") + "/models"
+    headers = {"Authorization": "Bearer " + key} if key else {}
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers),
+                                    timeout=timeout) as r:
+            body = json.loads(r.read().decode("utf-8", "replace"))
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            return ("FAIL", f"HTTP {e.code} — api_key rejected")
+        return ("FAIL", f"HTTP {e.code}")
+    except (urllib.error.URLError, TimeoutError, socket.timeout, ssl.SSLError,
+            OSError) as e:
+        return ("FAIL", f"endpoint unreachable: {getattr(e, 'reason', e)}")
+    except Exception as e:
+        return ("FAIL", f"response parse error: {e}")
+    ids = [m.get("id") for m in body.get("data", []) if isinstance(m, dict)]
+    if model and ids:
+        probe_model = model.split("/", 1)[-1]  # strip router prefix (newapi/X)
+        probe_model = probe_model.removesuffix("[1M]")  # strip claude suffix
+        if probe_model not in ids:
+            return ("WARN", f"endpoint ok, but model {model!r} NOT in /models "
+                            f"({len(ids)} listed) — calls will fail")
+    return ("PASS", f"endpoint ok, {len(ids)} models listed"
+            + (f", model {model!r} present" if model and ids else ""))
+
+
+def cmd_verify(args) -> int:
+    adapters = _filter_adapters(_load_adapters(), args.only, args.exclude)
+    results: list[tuple[str, str, str]] = []
+    for a in adapters:
+        if not a.available:
+            results.append((a.id, "SKIP", "not installed"))
+            continue
+        slots = a.slots()
+        model = next((s.current for s in slots if s.kind == KIND_MODEL and s.current), None)
+        base = next((s.current for s in slots if s.kind == KIND_BASE_URL), None)
+        key = next((s.current for s in slots if s.kind == KIND_API_KEY), None)
+        if not base:
+            results.append((a.id, "SKIP", "no base_url slot (env-only/unsupported)"))
+            continue
+        key = _resolve_key(key)
+        probe = getattr(a, "probe", None)
+        if callable(probe):
+            status, msg = probe(timeout=args.timeout)
+        else:
+            status, msg = _probe_endpoint(base, key, model, args.timeout)
+        results.append((a.id, status, msg))
+
+    for aid, status, msg in results:
+        mark = {"PASS": "✓", "WARN": "!", "FAIL": "✘", "SKIP": "·"}[status]
+        print(f"  {mark} {aid:<12} {status:<5} {msg}")
+    n_pass = sum(1 for _, s, _ in results if s == "PASS")
+    n_warn = sum(1 for _, s, _ in results if s == "WARN")
+    n_fail = sum(1 for _, s, _ in results if s == "FAIL")
+    n_skip = sum(1 for _, s, _ in results if s == "SKIP")
+    print(f"\n{n_pass} pass, {n_warn} warn, {n_fail} fail, {n_skip} skip "
+          f"(of {len(results)} adapters)", file=sys.stderr)
+    return 1 if n_fail else 0
+
+
 # ---- parser --------------------------------------------------------------
 
 def _add_scope(p):
     p.add_argument("--only", help="comma-separated adapter ids to include")
     p.add_argument("--exclude", help="comma-separated adapter ids to skip")
+
+
+def _add_endpoint(p):
+    p.add_argument("--base-url", metavar="URL",
+                   help="switch every agent's base_url slot to URL")
+    p.add_argument("--api-key", metavar="KEY",
+                   help="switch every agent's api_key slot to KEY. For env-var "
+                        "agents (codex/grok/reasonix) the literal is persisted to "
+                        "the shell rc (posix) / user env (windows). Prefer "
+                        "profiles to keep keys out of shell history.")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -327,6 +471,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-keep-prefix", action="store_true",
                    help="set the model name verbatim, dropping any 'prefix/' "
                         "route id the adapter had (use with care)")
+    _add_endpoint(p)
     sub = p.add_subparsers(dest="cmd")
 
     sl = sub.add_parser("list", help="list installed/known adapters")
@@ -339,7 +484,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("profiles", help="list profiles in ~/.ccse/profiles.toml")
     sp.set_defaults(func=cmd_profiles)
 
-    pa = sub.add_parser("apply", help="write --model or a profile into all agents")
+    pa = sub.add_parser("apply", help="write --model/--base-url/--api-key or a profile into all agents")
     _add_scope(pa)
     pa.add_argument("--model", metavar="NAME",
                     help="set every agent's primary slot to NAME (prefix kept)")
@@ -347,6 +492,7 @@ def build_parser() -> argparse.ArgumentParser:
     pa.add_argument("--no-backup", action="store_true", help="skip snapshot")
     pa.add_argument("--no-keep-prefix", action="store_true",
                     help="set model verbatim (drop route prefix)")
+    _add_endpoint(pa)
     pa.set_defaults(func=cmd_apply)
 
     pd = sub.add_parser("diff", help="preview changes (dry-run)")
@@ -355,6 +501,7 @@ def build_parser() -> argparse.ArgumentParser:
     pd.add_argument("profile", nargs="?")
     pd.add_argument("--no-keep-prefix", action="store_true",
                     help="set model verbatim (drop route prefix)")
+    _add_endpoint(pd)
     pd.set_defaults(func=cmd_diff)
 
     pg = sub.add_parser("genprofile", help="snapshot current state into a profile")
@@ -372,6 +519,14 @@ def build_parser() -> argparse.ArgumentParser:
     psn = sub.add_parser("snapshots", help="list saved snapshots")
     psn.set_defaults(func=cmd_snapshots)
 
+    pv = sub.add_parser(
+        "verify", help="probe every agent's configured endpoint + model "
+                       "(run after a switch to confirm it still works)")
+    _add_scope(pv)
+    pv.add_argument("--timeout", type=int, default=8,
+                    help="per-endpoint HTTP timeout in seconds (default 8)")
+    pv.set_defaults(func=cmd_verify)
+
     return p
 
 
@@ -380,11 +535,25 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     # top-level --model shorthand: act as `apply --model`
     if getattr(args, "cmd", None) is None:
-        if getattr(args, "model", None) is not None:
-            kp = not getattr(args, "no_keep_prefix", False)
-            assignments = _model_assignments(args.model, args.only, args.exclude,
-                                             keep_prefix=kp)
-            tag = f"--model {args.model}" + ("" if kp else " (raw)")
+        if getattr(args, "model", None) is not None or \
+                getattr(args, "base_url", None) or getattr(args, "api_key", None):
+            assignments: dict[str, str] = {}
+            if getattr(args, "model", None) is not None:
+                kp = not getattr(args, "no_keep_prefix", False)
+                assignments.update(_model_assignments(
+                    args.model, args.only, args.exclude, keep_prefix=kp))
+            if getattr(args, "base_url", None):
+                assignments.update(_endpoint_assignments(
+                    KIND_BASE_URL, args.base_url, args.only, args.exclude))
+            if getattr(args, "api_key", None):
+                assignments.update(_endpoint_assignments(
+                    KIND_API_KEY, args.api_key, args.only, args.exclude))
+            parts = [p for p in (
+                f"--model {args.model}" if getattr(args, "model", None) else None,
+                f"--base-url {args.base_url}" if getattr(args, "base_url", None) else None,
+                "--api-key <redacted>" if getattr(args, "api_key", None) else None,
+            ) if p]
+            tag = " --".join(parts)
             return _apply_assignments(
                 assignments, dry=args.dry, no_backup=args.no_backup,
                 only=args.only, exclude=args.exclude, tag=tag)

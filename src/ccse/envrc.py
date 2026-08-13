@@ -1,18 +1,21 @@
 """Shell-rc / env-var adapter: mutates `export VAR=...` lines.
 
-For agents whose model name lives in an environment variable sourced from a
-shell rc file (e.g. Kimi Code reads ``KIMI_MODEL_NAME`` from ``~/.zshrc``),
-not a structured config. We only touch the given VAR; nothing else in the rc
-file changes, and writes are single-quoted so names with shell glob metachars
-(``glm-5.2[1M]``) stay literal.
+For agents whose model name lives in an environment variable (e.g. Kimi Code
+reads ``KIMI_MODEL_NAME`` from a shell rc file), not a structured config. On
+posix (linux/macOS) the value lives in ``~/.zshrc`` as ``export VAR=...``;
+on Windows it lives in the user environment, persisted via ``setx``. We only
+touch the given VAR; nothing else in the rc file changes, and writes are
+single-quoted so names with shell glob metachars (``glm-5.2[1M]``) stay
+literal.
 """
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
 from . import config
-from .registry import Slot, register
+from .registry import KIND_API_KEY, KIND_MODEL, Slot, register
 
 HOME = config.HOME
 
@@ -41,6 +44,57 @@ def _quote(val: str) -> str:
     return "'" + val.replace("'", "'\\''") + "'"
 
 
+def _setx(var: str, value: str) -> bool:
+    """Persist `VAR=value` into the Windows user environment (survives reboot;
+    current process won't see it until next shell)."""
+    import subprocess
+    try:
+        r = subprocess.run(["setx", var, value], capture_output=True, text=True)
+        return r.returncode == 0
+    except OSError:
+        return False
+
+
+def ensure_env_var(var: str, value: str, path: Path | None = None) -> tuple[str, str] | None:
+    """Persist `VAR=value`. posix: update or append `export VAR='value'` in the
+    shell rc file (default config.SHELL_RC); windows: `setx` into the user env.
+
+    Returns (old, new) if a change is needed, else None. Reuses the same line
+    rewrite logic as apply() so agent env-var keys (codex/grok/reasonix) can
+    persist a literal key into the shell rc / user env once.
+    """
+    if config.OS_NAME == "windows":
+        old = os.environ.get(var)
+        if old == value:
+            return None
+        if _setx(var, value):
+            return (old or "<unset>", value)
+        return None
+    file_path = path or config.SHELL_RC
+    if file_path is None:
+        return None
+    if not file_path.exists():
+        return None
+    lines = file_path.read_text("utf-8").splitlines()
+    new_lines: list[str] = []
+    old_val: str | None = None
+    replaced = False
+    for line in lines:
+        m = _LINE.match(line)
+        if m and m.group("var") == var:
+            old_val = _unquote(m.group("val"))
+            if old_val == value:
+                return None
+            new_lines.append(f"export {var}={_quote(value)}")
+            replaced = True
+            continue
+        new_lines.append(line)
+    if not replaced:
+        new_lines.append(f"export {var}={_quote(value)}")
+    config.write_text_atomic(file_path, "\n".join(new_lines) + "\n")
+    return (old_val or "<unset>", value)
+
+
 def _read_vars(path: Path, want: set[str]) -> dict[str, str]:
     out: dict[str, str] = {}
     if not path.exists():
@@ -57,17 +111,32 @@ def make_envrc_adapter(
     name: str,
     var_map: dict[str, str],
     path: Path | None = None,
+    kinds: dict[str, str] | None = None,
 ):
-    """Build+register a shell-rc env adapter. var_map: {slot_label: ENV_VAR}.
-    The first key is the adapter's primary slot. `path` defaults to ~/.zshrc."""
-    file_path = path or (HOME / ".zshrc")
+    """Build+register a shell-rc / user-env adapter. var_map: {slot_label: ENV_VAR}.
+    The first key is the adapter's primary slot. `path` defaults to
+    config.SHELL_RC (posix shell rc); on Windows it is None and values are read
+    from / written to the user environment via setx.
+    `kinds`: {slot_label: slot_kind} for non-model slots (e.g. api_key)."""
+    file_path = path if path is not None else config.SHELL_RC
     # slot -> env var
     slot2var = var_map
     var2slot = {v: k for k, v in var_map.items()}
     primary = next(iter(slot2var))
+    slot_kind = dict(kinds or {})
+
+    def _is_windows() -> bool:
+        return config.OS_NAME == "windows"
 
     def slots(self):
-        if not file_path.exists():
+        if _is_windows():
+            out = []
+            for label, var in slot2var.items():
+                out.append(Slot(key=f"{adapter_id}.{label}", label=label,
+                                current=os.environ.get(var),
+                                kind=slot_kind.get(label, KIND_MODEL)))
+            return out
+        if file_path is None or not file_path.exists():
             return []
         found = _read_vars(file_path, set(slot2var.values()))
         out = []
@@ -76,13 +145,29 @@ def make_envrc_adapter(
             if cur is None:
                 # not declared yet but file exists → still show <unset>
                 cur = None
-            out.append(Slot(key=f"{adapter_id}.{label}", label=label, current=cur))
+            out.append(Slot(key=f"{adapter_id}.{label}", label=label, current=cur,
+                            kind=slot_kind.get(label, KIND_MODEL)))
         return out
 
     def apply(self, assignments, dry=False):
         relevant = {k[len(adapter_id) + 1:]: v for k, v in assignments.items()
                     if k.startswith(adapter_id + ".")}
-        if not relevant or not file_path.exists():
+        if not relevant:
+            return []
+        if _is_windows():
+            diffs: list[str] = []
+            for label, val in relevant.items():
+                var = slot2var.get(label)
+                if not var:
+                    continue
+                old = os.environ.get(var)
+                if old == val:
+                    continue
+                diffs.append(f"  env {var}: {old!r} -> {val!r}")
+                if not dry:
+                    _setx(var, val)
+            return diffs
+        if file_path is None or not file_path.exists():
             return []
         want_vars = {slot2var[label]: v for label, v in relevant.items()
                      if label in slot2var}
@@ -127,18 +212,18 @@ def make_envrc_adapter(
     return cls
 
 
-# Kimi Code: model name in ~/.zshrc as export KIMI_MODEL_NAME=...
+# Kimi Code: model name in shell rc / user env as KIMI_MODEL_NAME=...
 make_envrc_adapter(
     "kimi", "Kimi Code",
-    {"model": "KIMI_MODEL_NAME"},
-    path=HOME / ".zshrc",
+    {"model": "KIMI_MODEL_NAME", "api_key": "KIMI_MODEL_API_KEY"},
+    kinds={"api_key": KIND_API_KEY},
 )
 # CoPAW: export COPAW_MODEL_NAME=... (kept since other CoPAW model infra is
 # dynamic; this is the one stable reference users wire for NewAPI fallback).
 make_envrc_adapter(
     "copaw", "CoPAW",
-    {"model": "COPAW_MODEL_NAME"},
-    path=HOME / ".zshrc",
+    {"model": "COPAW_MODEL_NAME", "api_key": "COPAW_MODEL_API_KEY"},
+    kinds={"api_key": KIND_API_KEY},
 )
 
 
