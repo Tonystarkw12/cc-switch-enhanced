@@ -62,7 +62,8 @@ def cmd_list(_args) -> int:
     rc = str(config.SHELL_RC) if config.SHELL_RC else "user env (setx)"
     print(f"{'adapter':<12} {'name':<16} {'avail':<5} path   [os={config.OS_NAME}, env={rc}]")
     for a in adapters:
-        print(f"{a.id:<12} {a.name:<16} {'✓' if a.available else '—':<5} {a.path}")
+        p = a.path if a.path is not None else "user env (setx)"
+        print(f"{a.id:<12} {a.name:<16} {'✓' if a.available else '—':<5} {p}")
     return 0
 
 
@@ -147,7 +148,7 @@ def _apply_assignments(assignments: dict[str, str], *, dry: bool,
                 seen.add(z)
                 touched.append(z)
         for a in adapters:
-            if a.path.exists() and a.path not in seen:
+            if a.path is not None and a.path.exists() and a.path not in seen:
                 seen.add(a.path)
                 touched.append(a.path)
         if touched:

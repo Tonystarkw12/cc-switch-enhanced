@@ -187,6 +187,7 @@ def test_envrc_windows_user_env(tmp_path, monkeypatch):
     cls = envrc_mod.make_envrc_adapter("kimi_win", "Kimi Win",
                                        {"model": "KIMI_MODEL_NAME"})
     a = cls()
+    assert a.available is True  # no rc file → env-based, still available
     assert a.slots()[0].current == "gpt-5.6-terra"
     diffs = a.apply({"kimi_win.model": "glm-5.2[1M]"}, dry=False)
     assert diffs and calls == [("KIMI_MODEL_NAME", "glm-5.2[1M]")]

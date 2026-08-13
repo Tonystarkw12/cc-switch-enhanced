@@ -204,7 +204,8 @@ def make_envrc_adapter(
         f"_{adapter_id}_envrc",
         (object,),
         {"id": adapter_id, "name": name, "path": file_path,
-         "available": property(lambda self: file_path.exists()),
+         "available": property(
+             lambda self: file_path is None or file_path.exists()),
          "primary": f"{adapter_id}.{primary}",
          "slots": slots, "apply": apply},
     )
