@@ -42,7 +42,7 @@ class OpenCodeAdapter:
             if isinstance(v, dict) and "model" in v:
                 out.append(Slot(key=f"{self.id}.agent.{role}.model",
                                 label=f"agent.{role}.model",
-                                current=v.get("model")))
+                                current=v.get("model"), follows=True))
         prov = self._provider(d)
         if prov:
             out.append(Slot(key=f"{self.id}.base_url", label=f"provider.{prov}.baseURL",

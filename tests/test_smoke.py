@@ -14,12 +14,13 @@ from ccse.registry import all_adapters
 
 def test_registry_loads_all_targets():
     from ccse import claude, cline, codex, gemini, opencode, qwen, prime  # noqa: F401
+    from ccse import openakita  # noqa: F401
     from ccse import extra  # noqa: F401
     ids = {a.id for a in all_adapters()}
     for expect in ("claude", "codex", "opencode", "gemini", "qwen", "cline",
                    "codebuddy", "pi", "openclaw", "kilocode", "reasonix",
                    "grok", "forge", "hermes", "snow", "crush", "droid",
-                   "memmy", "prime", "omp", "kilo"):
+                   "memmy", "prime", "omp", "kilo", "openakita"):
         assert expect in ids, f"missing adapter {expect}"
 
 
@@ -156,6 +157,86 @@ def test_qwen_apply_roundtrip(tmp_path: Path, monkeypatch):
     assert after["model"]["baseUrl"] == "u"
     assert after["$version"] == 4
     qwen_mod.QwenAdapter.path = config.HOME / ".qwen" / "settings.json"
+
+
+def test_openakita_apply_roundtrip(tmp_path: Path, monkeypatch):
+    from ccse import openakita as oa_mod
+    cfg = tmp_path / "llm_endpoints.json"
+    cfg.write_text(json.dumps({
+        "endpoints": [
+            {"name": "primary", "priority": 1, "model": "gpt-5.6-sol",
+             "base_url": "http://192.168.0.14:6333/v1", "api_key_env": "OPENAI_API_KEY"},
+        ],
+        "compiler_endpoints": [{"name": "compiler-primary", "model": "gpt-5.4-mini"}],
+        "settings": {"retry_count": 2},
+    }))
+    oa_mod.OpenAkitaAdapter.path = cfg  # type: ignore[misc]
+    a = oa_mod.OpenAkitaAdapter()
+    # slots detect the primary endpoint values
+    slots = {s.key: s.current for s in a.slots()}
+    assert slots["openakita.model"] == "gpt-5.6-sol"
+    assert slots["openakita.base_url"] == "http://192.168.0.14:6333/v1"
+    # apply model + base_url
+    diffs = a.apply({"openakita.model": "qwen3.6-plus",
+                     "openakita.base_url": "http://10.0.0.1:8000/v1"}, dry=False)
+    assert any("endpoints[0].model" in d and "qwen3.6-plus" in d for d in diffs)
+    after = json.loads(cfg.read_text())
+    assert after["endpoints"][0]["model"] == "qwen3.6-plus"
+    assert after["endpoints"][0]["base_url"] == "http://10.0.0.1:8000/v1"
+    assert after["compiler_endpoints"][0]["model"] == "gpt-5.4-mini"  # untouched
+    assert after["settings"]["retry_count"] == 2
+    # idempotent: re-applying same values yields no diffs
+    assert a.apply({"openakita.model": "qwen3.6-plus"}, dry=False) == []
+    # falls back to endpoints[0] when no priority:1 entry
+    cfg.write_text(json.dumps({"endpoints": [{"model": "m1", "base_url": "u1"}]}))
+    assert a.slots()[0].current == "m1"
+    oa_mod.OpenAkitaAdapter.path = config.HOME / ".openakita" / "data" / "llm_endpoints.json"
+
+
+def test_model_switch_includes_follows_slots(tmp_path: Path, monkeypatch):
+    """`--model NAME` must cover every model slot flagged ``follows=True``
+    (opencode subagents), keeping each slot's structural <prefix>/ route."""
+    import ccse.cli as cli_mod
+    from ccse import opencode as oc_mod
+    cfg = tmp_path / "opencode.json"
+    cfg.write_text(json.dumps({
+        "model": "newapi/old-main",
+        "agent": {"build": {"model": "newapi/old-build"},
+                  "plan": {"model": "newapi/old-plan"}},
+        "provider": {"newapi": {"options": {"baseURL": "u", "apiKey": "k"}}},
+    }))
+    oc_mod.OpenCodeAdapter.path = cfg  # type: ignore[misc]
+    monkeypatch.setattr(cli_mod, "_load_adapters", lambda: [oc_mod.OpenCodeAdapter()])
+    monkeypatch.setattr(cli_mod, "_filter_adapters", lambda ads, o, e: ads)
+    assigns = cli_mod._model_assignments("glm-5.2", None, None)
+    assert assigns["opencode.model"] == "newapi/glm-5.2"            # prefix kept
+    assert assigns["opencode.agent.build.model"] == "newapi/glm-5.2"  # follows
+    assert assigns["opencode.agent.plan.model"] == "newapi/glm-5.2"   # follows
+    oc_mod.OpenCodeAdapter.path = (config.HOME / ".config" / "opencode"
+                                   / "opencode.json")
+
+
+def test_codex_literal_api_key(tmp_path: Path, monkeypatch):
+    """Codex provider may carry a literal ``api_key`` (no ``env_key``): the slot
+    reads the literal and apply writes it back into config.toml, not ~/.zshrc."""
+    import tomllib
+    from ccse import codex as codex_mod
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        'model = "old"\nmodel_provider = "newapi"\n'
+        '[model_providers.newapi]\nname = "NewAPI"\n'
+        'base_url = "https://x/v1"\napi_key = "sk-old-literal"\n')
+    codex_mod.CodexAdapter.path = cfg  # type: ignore[misc]
+    a = codex_mod.CodexAdapter()
+    slots = {s.key: s for s in a.slots()}
+    assert slots["codex.api_key"].current == "sk-old-literal"  # literal, not env name
+    # apply writes the literal into the toml provider block
+    diffs = a.apply({"codex.api_key": "sk-new-literal"}, dry=False)
+    assert any("api_key" in d for d in diffs)
+    assert not any("(zshrc)" in d for d in diffs)  # not routed to shell rc
+    d = tomllib.loads(cfg.read_text())
+    assert d["model_providers"]["newapi"]["api_key"] == "sk-new-literal"
+    codex_mod.CodexAdapter.path = config.HOME / ".codex" / "config.toml"
 
 
 def test_jsonpath_list_selector_roundtrip():

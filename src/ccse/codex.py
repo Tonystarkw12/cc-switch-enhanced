@@ -39,9 +39,16 @@ class CodexAdapter:
         if prov is not None:
             out.append(Slot(key=f"{self.id}.base_url", label="provider base_url",
                             current=prov.get("base_url"), kind=KIND_BASE_URL))
-            # api_key lives in an env var (env_key names it); expose the var NAME
-            out.append(Slot(key=f"{self.id}.api_key", label="provider env_key",
-                            current=prov.get("env_key"), kind=KIND_API_KEY))
+            # codex providers key two ways: ``env_key`` names an env var the
+            # binary reads at launch, OR ``api_key`` holds the literal in this
+            # file. Expose whichever is present (var name vs redacted literal).
+            env_var = prov.get("env_key")
+            if env_var:
+                out.append(Slot(key=f"{self.id}.api_key", label="provider env_key",
+                                current=env_var, kind=KIND_API_KEY))
+            elif "api_key" in prov:
+                out.append(Slot(key=f"{self.id}.api_key", label="provider api_key",
+                                current=prov.get("api_key"), kind=KIND_API_KEY))
         return out
 
     def apply(self, assignments: dict[str, str], dry: bool) -> list[str]:
@@ -73,16 +80,28 @@ class CodexAdapter:
                         prov["base_url"] = relevant["base_url"]
                         config_dirty = True
             if "api_key" in relevant:
-                var = prov.get("env_key") or "NEWAPI_API_KEY"
-                # codex reads the key from $var; persist the literal into ~/.zshrc
-                old_key = os.environ.get(var)
-                if old_key != relevant["api_key"]:
-                    if not dry:
-                        from .envrc import ensure_env_var
-                        ensure_env_var(var, relevant["api_key"])
-                    diffs.append(
-                        f"  env {var} (zshrc): {config.redact(old_key)!r} -> "
-                        f"{config.redact(relevant['api_key'])!r}")
+                val = relevant["api_key"]
+                env_var = prov.get("env_key")
+                if env_var:
+                    # key read from $env_var at launch → persist literal to ~/.zshrc
+                    old_key = os.environ.get(env_var)
+                    if old_key != val:
+                        if not dry:
+                            from .envrc import ensure_env_var
+                            ensure_env_var(env_var, val)
+                        diffs.append(
+                            f"  env {env_var} (zshrc): {config.redact(old_key)!r} -> "
+                            f"{config.redact(val)!r}")
+                else:
+                    # literal api_key field in this file → write it in place
+                    old = prov.get("api_key")
+                    if old != val:
+                        diffs.append(
+                            f"  model_providers[{prov_name}].api_key: "
+                            f"{config.redact(old)!r} -> {config.redact(val)!r}")
+                        if not dry:
+                            prov["api_key"] = val
+                            config_dirty = True
         if config_dirty and not dry:
             if not config.detect_tomli_w():
                 config.die("tomli_w not installed; run `uv pip install tomli-w` to write Codex TOML")

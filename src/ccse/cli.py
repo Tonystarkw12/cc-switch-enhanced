@@ -27,7 +27,7 @@ _ENV_KEY_ADAPTERS = ("codex", "grok", "reasonix", "memmy", "omp", "prime")
 
 def _load_adapters():
     # import side-effect registers adapters
-    from . import claude, cline, codex, gemini, opencode, qwen, prime  # noqa: F401
+    from . import claude, cline, codex, gemini, opencode, qwen, prime, openakita  # noqa: F401
     from . import extra, envrc  # noqa: F401
     return all_adapters()
 
@@ -206,7 +206,9 @@ def _model_assignments(name: str, only, exclude, keep_prefix: bool = True) -> di
     """Build {slot_key: target} for every adapter in scope.
 
     Sets the adapter's primary slot; adapters that declare ``follow``
-    (e.g. claude.main + claude.subagent) get those too."""
+    (e.g. claude.main + claude.subagent) get those too, plus any slot
+    that carries ``follows=True`` (dynamic subagent/secondary model
+    fields discovered via ``slots()``)."""
     adapters = _filter_adapters(_load_adapters(), only, exclude)
     out: dict[str, str] = {}
     for a in adapters:
@@ -214,6 +216,8 @@ def _model_assignments(name: str, only, exclude, keep_prefix: bool = True) -> di
             continue
         slots = {s.key: s for s in a.slots()}
         keys = [_primary_key(a), *_follow_keys(a)]
+        keys += [s.key for s in slots.values()
+                 if getattr(s, "follows", False) and s.key not in keys]
         for key in keys:
             if key not in slots:
                 continue

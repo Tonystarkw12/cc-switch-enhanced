@@ -152,6 +152,7 @@ make_adapter(
         "base_url": "models.providers.{provider}.baseUrl",
         "api_key": "models.providers.{provider}.apiKey",
     },
+    follow=("subagent",),
 )
 
 # KiloCode: ~/.kilocode/cli/config.json — providers[selected].apiModelId +
@@ -286,13 +287,15 @@ class KiloAdapter:
         return diffs
 
 # Snow: ~/.snow/config.json — snowcfg.advancedModel (main model; snow falls
-# back to "gpt-5" when empty). basicModel is a secondary slot for --useBasicModel.
+# back to "gpt-5" when empty). basicModel tracks the primary on `--model` so a
+# switch repoints both tiers (set both explicitly only to diverge them).
 make_adapter(
     "snow", "Snow",
     HOME / ".snow" / "config.json",
     {"advancedModel": "snowcfg.advancedModel",
      "basicModel": "snowcfg.basicModel"},
     endpoint_paths={"base_url": "snowcfg.baseUrl", "api_key": "snowcfg.apiKey"},
+    follow=("basicModel",),
 )
 
 

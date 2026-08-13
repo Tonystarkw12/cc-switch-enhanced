@@ -21,12 +21,15 @@ class Slot:
     label: human label shown by `show`
     current: detected current value, None if unset/agent absent
     kind: model | base_url | api_key — which `--X` flag targets it
+    follows: model slot that tracks the primary on a bare `--model NAME`
+        (subagent/secondary fields). Tier slots leave this False.
     """
 
     key: str
     label: str
     current: str | None
     kind: str = KIND_MODEL
+    follows: bool = False
 
 
 class Adapter(Protocol):
