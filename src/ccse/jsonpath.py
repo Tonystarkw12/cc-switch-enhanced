@@ -157,7 +157,8 @@ def _provider_of(d, primary_path: str) -> str | None:
 
 
 def make_adapter(adapter_id: str, name: str, path: Path, slot_paths: dict[str, str],
-                 endpoint_paths: dict[str, str] | None = None):
+                 endpoint_paths: dict[str, str] | None = None,
+                 follow: tuple[str, ...] = ()):
     """Build+register a JSON-path adapter. slot_paths: {slot_label: json_path}.
     The first key in slot_paths is treated as the adapter's primary slot (`--model`).
     Each label becomes both the human label and the profile key suffix
@@ -165,10 +166,14 @@ def make_adapter(adapter_id: str, name: str, path: Path, slot_paths: dict[str, s
 
     endpoint_paths: optional {kind: json_path} for base_url/api_key slots.
     A path may contain `{provider}`, resolved to the active provider name
-    (the prefix before '/' of the primary slot's value)."""
+    (the prefix before '/' of the primary slot's value).
+
+    follow: extra slot labels set alongside the primary by `--model NAME`
+    (e.g. ("defaultModel",) → `--model` also sets adapter.defaultModel)."""
     paths = slot_paths
     primary = next(iter(paths))
     ep = endpoint_paths or {}
+    follow_keys = tuple(f"{adapter_id}.{k}" for k in follow)
 
     def _ep_path(kind: str, d) -> str | None:
         t = ep.get(kind)
@@ -232,6 +237,7 @@ def make_adapter(adapter_id: str, name: str, path: Path, slot_paths: dict[str, s
         {"id": adapter_id, "name": name, "path": path,
          "available": property(lambda self: path.exists()),
          "primary": f"{adapter_id}.{primary}",
+         "follow": follow_keys,
          "slots": slots, "apply": apply},
     )
     register(cls)

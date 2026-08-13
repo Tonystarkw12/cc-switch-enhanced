@@ -20,14 +20,14 @@ from .registry import KIND_API_KEY, KIND_BASE_URL, KIND_MODEL, all_adapters
 PROFILES_PATH = config.HOME / ".ccse" / "profiles.toml"
 
 # adapters whose api_key is an env-var reference and get the literal written to
-# the shell rc / user env (codex/grok/reasonix/memmy). verify must snapshot that
-# file too.
-_ENV_KEY_ADAPTERS = ("codex", "grok", "reasonix", "memmy")
+# the shell rc / user env (codex/grok/reasonix/memmy/omp). verify must snapshot
+# that file too.
+_ENV_KEY_ADAPTERS = ("codex", "grok", "reasonix", "memmy", "omp")
 
 
 def _load_adapters():
     # import side-effect registers adapters
-    from . import claude, cline, codex, gemini, opencode, qwen  # noqa: F401
+    from . import claude, cline, codex, gemini, opencode, qwen, prime  # noqa: F401
     from . import extra, envrc  # noqa: F401
     return all_adapters()
 

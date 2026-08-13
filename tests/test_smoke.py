@@ -13,13 +13,13 @@ from ccse.registry import all_adapters
 
 
 def test_registry_loads_all_targets():
-    from ccse import claude, cline, codex, gemini, opencode, qwen  # noqa: F401
+    from ccse import claude, cline, codex, gemini, opencode, qwen, prime  # noqa: F401
     from ccse import extra  # noqa: F401
     ids = {a.id for a in all_adapters()}
     for expect in ("claude", "codex", "opencode", "gemini", "qwen", "cline",
                    "codebuddy", "pi", "openclaw", "kilocode", "reasonix",
                    "grok", "forge", "hermes", "snow", "crush", "droid",
-                   "memmy"):
+                   "memmy", "prime", "omp"):
         assert expect in ids, f"missing adapter {expect}"
 
 
@@ -294,6 +294,92 @@ def test_rewrite_dry_no_write(tmp_path):
     (tmp_path / ".env").write_text("OPENAI_MODEL=gpt-4o\n", "utf-8")
     rewrite.run(tmp_path, {"model": "x"}, dry=True)
     assert (tmp_path / ".env").read_text() == "OPENAI_MODEL=gpt-4o\n"
+
+
+def test_prime_adapter(tmp_path, monkeypatch):
+    """Prime = Claude-Code-style settings.json under ~/.prime/agent."""
+    from ccse import prime as prime_mod
+    settings = tmp_path / "settings.json"
+    settings.write_text(json.dumps({
+        "env": {"ANTHROPIC_MODEL": "gpt-5.6-terra",
+                "CLAUDE_CODE_SUBAGENT_MODEL": "gpt-5.6-terra",
+                "ANTHROPIC_BASE_URL": "http://a"}}))
+    monkeypatch.setattr(prime_mod, "HOME", tmp_path, raising=False)
+    monkeypatch.setattr(config, "HOME", tmp_path, raising=False)
+    prime_mod.PrimeAdapter.path = settings  # type: ignore[misc]
+    a = prime_mod.PrimeAdapter()
+    slots = {s.key: s for s in a.slots()}
+    assert slots["prime.model"].current == "gpt-5.6-terra"
+    assert slots["prime.base_url"].current == "http://a"
+    assert a.primary == "prime.model"
+    assert a.follow == ("prime.model", "prime.subagent")
+    assert a.suffix == ""  # prime has no [1M] marker
+    diffs = a.apply({"prime.model": "deepseek-v4-flash",
+                     "prime.subagent": "deepseek-v4-flash"}, dry=False)
+    assert len(diffs) == 2
+    after = json.loads(settings.read_text())
+    assert after["env"]["ANTHROPIC_MODEL"] == "deepseek-v4-flash"
+    assert after["env"]["CLAUDE_CODE_SUBAGENT_MODEL"] == "deepseek-v4-flash"
+    prime_mod.PrimeAdapter.path = config.HOME / ".prime" / "agent" / "settings.json"
+
+
+def test_omp_adapter(tmp_path, monkeypatch):
+    """OMP YAML: llm.model + defaultModel + modelRoles.default (`prov/model:lvl`)
+    all follow --model; api_key ${VAR} persists via envrc."""
+    from ccse import extra as extra_mod
+    cfg = tmp_path / "config.yml"
+    cfg.write_text(
+        "llm:\n"
+        "  provider: openai\n"
+        "  baseUrl: http://192.168.0.14:6333/v1\n"
+        "  model: gpt-5.6-sol\n"
+        "  apiKey: \"${OPENAI_API_KEY}\"\n"
+        "defaultProvider: local-openai\n"
+        "defaultModel: gpt-5.6-sol\n"
+        "modelRoles:\n"
+        "  default: local-openai/gpt-5.6-sol:xhigh\n", "utf-8")
+    monkeypatch.setattr(extra_mod, "HOME", tmp_path, raising=False)
+    extra_mod.OmpAdapter.path = cfg  # type: ignore[misc]
+    from ccse import envrc as envrc_mod
+    env_writes = []
+    monkeypatch.setattr(envrc_mod, "ensure_env_var",
+                        lambda var, val: env_writes.append((var, val)) or ("old", val),
+                        raising=False)
+    a = extra_mod.OmpAdapter()
+    slots = {s.key: s for s in a.slots()}
+    assert slots["omp.model"].current == "gpt-5.6-sol"
+    assert slots["omp.defaultModel"].current == "gpt-5.6-sol"
+    assert slots["omp.modelRole"].current == "local-openai/gpt-5.6-sol:xhigh"
+    assert slots["omp.api_key"].current == "${OPENAI_API_KEY}"
+    diffs = a.apply({"omp.model": "deepseek-v4-flash",
+                     "omp.defaultModel": "deepseek-v4-flash",
+                     "omp.modelRole": "local-openai/deepseek-v4-flash",
+                     "omp.api_key": "sk-2"}, dry=False)
+    assert len(diffs) == 4
+    assert env_writes == [("OPENAI_API_KEY", "sk-2")]
+    text = cfg.read_text()
+    assert "model: deepseek-v4-flash" in text
+    assert "defaultModel: deepseek-v4-flash" in text
+    assert "default: local-openai/deepseek-v4-flash:xhigh" in text  # level kept
+    assert 'apiKey: "${OPENAI_API_KEY}"' in text  # config keeps the var ref
+    extra_mod.OmpAdapter.path = config.HOME / ".omp" / "agent" / "config.yml"
+
+
+def test_make_adapter_follow(tmp_path):
+    """--model on a json-path adapter also sets follow slots (pi defaultModel)."""
+    from ccse import extra as extra_mod
+    cfg = tmp_path / "settings.json"
+    cfg.write_text(json.dumps({"llm": {"model": "a"}, "defaultModel": "a"}))
+    extra_mod.make_adapter("pi_f", "Pi", cfg,
+                           {"model": "llm.model", "defaultModel": "defaultModel"},
+                           follow=("defaultModel",))
+    from ccse.registry import REGISTRY
+    a = REGISTRY["pi_f"]()
+    assert a.follow == ("pi_f.defaultModel",)  # extra slot besides primary
+    diffs = a.apply({"pi_f.model": "x", "pi_f.defaultModel": "x"}, dry=False)
+    assert len(diffs) == 2
+    after = json.loads(cfg.read_text())
+    assert after["llm"]["model"] == "x" and after["defaultModel"] == "x"
 
 
 def test_keep_prefix_logic():

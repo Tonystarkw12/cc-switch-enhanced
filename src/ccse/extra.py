@@ -47,7 +47,9 @@ make_adapter(
 )
 
 # PI (lazyypi): ~/.pi/agent/settings.json — llm.model + subagents overrides +
-# defaultModel + provider model defs
+# defaultModel + provider model defs. `--model` also sets defaultModel — pi
+# resolves the active model from defaultModel, not llm.model, so missing it
+# would leave the switch half-applied.
 make_adapter(
     "pi", "Pi",
     HOME / ".pi" / "agent" / "settings.json",
@@ -62,6 +64,7 @@ make_adapter(
         "subagent.worker": "subagents.agentOverrides.worker.model",
     },
     endpoint_paths={"base_url": "llm.baseUrl", "api_key": "llm.apiKey"},
+    follow=("defaultModel",),
 )
 
 # OpenClaw: ~/.openclaw/openclaw.json — agents.defaults.model.primary +
@@ -640,6 +643,105 @@ def _env_name(ref: str | None) -> str:
     if ref and ref.startswith("${") and ref.endswith("}"):
         return ref[2:-1]
     return ref or "NEWAPI_API_KEY"
+
+
+@register
+class OmpAdapter:
+    """OMP ~/.omp/agent/config.yml: llm.model (primary) + defaultModel +
+    modelRoles.default (`provider/model:level`) + llm.baseUrl/apiKey.
+    apiKey is a `${ENV_VAR}` reference; `--api-key` persists the literal via
+    ensure_env_var so the config keeps the var name."""
+    id = "omp"
+    name = "OMP"
+    primary = "omp.model"
+    # `--model` sets llm.model + defaultModel + modelRoles.default together
+    follow = ("omp.model", "omp.defaultModel", "omp.modelRole")
+    path = HOME / ".omp" / "agent" / "config.yml"
+
+    @property
+    def available(self):
+        return self.path.exists()
+
+    def slots(self):
+        if not self.available:
+            return []
+        doc, _y = _load_yaml(self.path)
+        if doc is None:
+            return []
+        llm = doc.get("llm") or {}
+        out = [Slot(key="omp.model", label="llm.model", current=llm.get("model"))]
+        out.append(Slot(key="omp.defaultModel", label="defaultModel",
+                        current=doc.get("defaultModel")))
+        mr = doc.get("modelRoles") or {}
+        out.append(Slot(key="omp.modelRole", label="modelRoles.default",
+                        current=mr.get("default")))
+        if llm.get("baseUrl"):
+            out.append(Slot(key="omp.base_url", label="llm.baseUrl",
+                            current=llm.get("baseUrl"), kind=KIND_BASE_URL))
+        out.append(Slot(key="omp.api_key", label="llm.apiKey",
+                        current=llm.get("apiKey"), kind=KIND_API_KEY))
+        return out
+
+    def _merge_model_role(self, new: str, old: str | None) -> str:
+        """modelRoles.default is `provider/model:level`. A bare target keeps
+        old provider prefix (cli already does) and old `:level` suffix."""
+        if old and ":" in old and ":" not in new:
+            new = new + old[old.index(":"):]
+        return new
+
+    def apply(self, assignments, dry=False):
+        relevant = {k[len("omp."):]: v for k, v in assignments.items()
+                    if k.startswith("omp.")}
+        if not relevant or not self.available:
+            return []
+        doc, y = _load_yaml(self.path)
+        if doc is None:
+            return [f"  (skip: ruamel.yaml unavailable)"]
+        llm = doc.setdefault("llm", {})
+        diffs: list[str] = []
+        if "model" in relevant:
+            old = llm.get("model")
+            if old != relevant["model"]:
+                diffs.append(f"  llm.model: {old!r} -> {relevant['model']!r}")
+                if not dry:
+                    llm["model"] = relevant["model"]
+        if "defaultModel" in relevant:
+            old = doc.get("defaultModel")
+            if old != relevant["defaultModel"]:
+                diffs.append(f"  defaultModel: {old!r} -> {relevant['defaultModel']!r}")
+                if not dry:
+                    doc["defaultModel"] = relevant["defaultModel"]
+        if "modelRole" in relevant:
+            mr = doc.setdefault("modelRoles", {})
+            old = mr.get("default")
+            new = self._merge_model_role(relevant["modelRole"], old)
+            if old != new:
+                diffs.append(f"  modelRoles.default: {old!r} -> {new!r}")
+                if not dry:
+                    mr["default"] = new
+        if "base_url" in relevant:
+            old = llm.get("baseUrl")
+            if old != relevant["base_url"]:
+                diffs.append(f"  llm.baseUrl: {old!r} -> {relevant['base_url']!r}")
+                if not dry:
+                    llm["baseUrl"] = relevant["base_url"]
+        if "api_key" in relevant:
+            var = _env_name(llm.get("apiKey"))
+            old_key = os.environ.get(var)
+            if old_key != relevant["api_key"]:
+                if not dry:
+                    from .envrc import ensure_env_var
+                    ensure_env_var(var, relevant["api_key"])
+                diffs.append(f"  env {var}: {config.redact(old_key)!r} -> "
+                             f"{config.redact(relevant['api_key'])!r}")
+        if not diffs:
+            return []
+        if not dry:
+            from io import StringIO
+            buf = StringIO()
+            y.dump(doc, buf)
+            config.write_text_atomic(self.path, buf.getvalue())
+        return diffs
 
 
 @register

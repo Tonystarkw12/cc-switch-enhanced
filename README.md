@@ -64,7 +64,7 @@ ccse profiles                      # 列已有 profile
 - `agent.slot = "name"`：`agent` 选 adapter，`slot` 选该 adapter 内字段。
 - profile 里省略的槽位**不动** → 可只切部分 agent。
 
-## adapter 对照（18 个）
+## adapter 对照（21 个）
 
 结构化配置文件（`--model` 改的字段 + `--base-url`/`--api-key` 改的字段）：
 
@@ -88,6 +88,9 @@ ccse profiles                      # 列已有 profile
 | `hermes` | `~/.hermes/config.yaml` | YAML | `model.default` | `model.base_url` | `model.api_key` |
 | `snow` | `~/.snow/config.json` | JSON | `snowcfg.advancedModel` (+`basicModel`) | `snowcfg.baseUrl` | `snowcfg.apiKey` |
 | `memmy` | `~/.memmy/config.yaml` | YAML | `agents.defaults.model` | 活动 provider `apiBase` | `apiKey` 的 `${ENV_VAR}` → 写入 shell rc / setx |
+| `prime` | `~/.prime/agent/settings.json` | JSON | `env.ANTHROPIC_MODEL` (+`CLAUDE_CODE_SUBAGENT_MODEL`，无 `[1M]`） | `env.ANTHROPIC_BASE_URL` | `env.ANTHROPIC_AUTH_TOKEN` |
+| `pi` | `~/.pi/agent/settings.json` | JSON | `llm.model`（+`defaultModel`，pi 实际按它解析活跃模型） | `llm.baseUrl` | `llm.apiKey` |
+| `omp` | `~/.omp/agent/config.yml` | YAML | `llm.model` + `defaultModel` + `modelRoles.default`（保留 `provider/` 前缀和 `:level` 后缀） | `llm.baseUrl` | `llm.apiKey` 的 `${ENV_VAR}` → 写入 shell rc / setx |
 
 env / shell-rc（模型名在 `~/.zshrc` 的 `export` 行）：
 
@@ -193,7 +196,7 @@ pipx/uv 装一个 CLI，stdlib(`argparse`/`tomllib`/`json`/`urllib`)为主；第
 
 ## ROADMAP
 
-- [x] 18 adapter（claude/codex/opencode/gemini/qwen/cline + codebuddy/pi/openclaw/kilocode/reasonix/grok/forge/hermes/snow/crush/droid/memmy + kimi/copaw envrc）
+- [x] 21 adapter（claude/codex/opencode/gemini/qwen/cline + codebuddy/pi/openclaw/kilocode/reasonix/grok/forge/hermes/snow/crush/droid/memmy/prime/omp + kimi/copaw envrc）
 - [x] `--model NAME` 全量一键 + `--only`/`--exclude` + 保前缀 + claude 自动 `[1M]`
 - [x] `--base-url` / `--api-key` 全量一键（含 env 型写入 ~/.zshrc、env_key 解析）
 - [x] `apply`/`diff` 双模式 + profile 多槽位
