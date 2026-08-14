@@ -14,13 +14,13 @@ from ccse.registry import all_adapters
 
 def test_registry_loads_all_targets():
     from ccse import claude, cline, codex, gemini, opencode, qwen, prime  # noqa: F401
-    from ccse import openakita, jcode  # noqa: F401
+    from ccse import openakita, jcode, dsh  # noqa: F401
     from ccse import extra  # noqa: F401
     ids = {a.id for a in all_adapters()}
     for expect in ("claude", "codex", "opencode", "gemini", "qwen", "cline",
                    "codebuddy", "pi", "openclaw", "kilocode", "reasonix",
                    "grok", "forge", "hermes", "snow", "crush", "droid",
-                   "memmy", "prime", "omp", "kilo", "openakita", "jcode"):
+                   "memmy", "prime", "omp", "kilo", "openakita", "jcode", "dsh"):
         assert expect in ids, f"missing adapter {expect}"
 
 
@@ -303,6 +303,30 @@ def test_rules_inject_remove(tmp_path: Path, monkeypatch):
     final = f.read_text("utf-8")
     assert rules.START not in final and rules.END not in final
     assert "# existing" in final and "some content" in final
+
+
+def test_dsh_roundtrip(tmp_path: Path, monkeypatch):
+    """DSH: model writes agentDefaultModel.model in settings.yaml, preserving
+    the existing ui-onboarding section; provider defaults on a fresh section;
+    idempotent."""
+    import ruamel.yaml as _y
+    from ccse import dsh as dsh_mod
+    cfg = tmp_path / "settings.yaml"
+    cfg.write_text("ui-onboarding:\n  welcomeNoticeVersion: 2026-08-13.1\n")
+    dsh_mod.DshAdapter.path = cfg  # type: ignore[misc]
+    a = dsh_mod.DshAdapter()
+    assert a.slots()[0].current is None  # agentDefaultModel absent
+    diffs = a.apply({"dsh.model": "glm-5.2"}, dry=False)
+    assert diffs and "glm-5.2" in diffs[0]
+    doc = _y.YAML().load(cfg.read_text("utf-8"))
+    assert doc["agentDefaultModel"]["model"] == "glm-5.2"
+    assert doc["agentDefaultModel"]["provider"] == "deepseek-official"  # defaulted
+    assert doc["ui-onboarding"]["welcomeNoticeVersion"] == "2026-08-13.1"  # preserved
+    # idempotent
+    assert a.apply({"dsh.model": "glm-5.2"}, dry=False) == []
+    # slot now reflects written value
+    assert a.slots()[0].current == "glm-5.2"
+    dsh_mod.DshAdapter.path = config.HOME / ".dsh" / "settings.yaml"
 
 
 def test_jsonpath_list_selector_roundtrip():
