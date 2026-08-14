@@ -74,15 +74,32 @@ class JCodeAdapter:
         prov_name, prov = self._provider(d)
         diffs: list[str] = []
         config_dirty = False
+        # Stale default_provider: when it names a built-in / non-existent block
+        # (e.g. "openai-compatible" resolves to jcode's built-in provider, not
+        # providers.newapi), jcode ignores our writes and falls back to
+        # api.openai.com. Re-point it at the block we actually write into.
+        declared = (d.get("provider") or {}).get("default_provider")
+        if prov is not None and declared != prov_name:
+            diffs.append(
+                f"  provider.default_provider: {declared!r} -> {prov_name!r}"
+                f" (stale ref -> active block)")
+            if not dry:
+                d.setdefault("provider", {})["default_provider"] = prov_name
+                config_dirty = True
         if "model" in relevant:
             val = relevant["model"]
-            # global active model
+            # global active model — jcode's model id is "<provider>:<model>"; a
+            # bare name is ambiguous and resolves to the openai built-in (same
+            # model id exists there). Qualify with the provider so jcode routes
+            # to the right block. Block-local default_model + registry id stay
+            # bare (implicit scope under [providers.<name>]).
+            qualified = f"{prov_name}:{val}" if prov_name else val
             prov_sec = d.setdefault("provider", {})
             old = prov_sec.get("default_model")
-            if old != val:
-                diffs.append(f"  provider.default_model: {old!r} -> {val!r}")
+            if old != qualified:
+                diffs.append(f"  provider.default_model: {old!r} -> {qualified!r}")
                 if not dry:
-                    prov_sec["default_model"] = val
+                    prov_sec["default_model"] = qualified
                     config_dirty = True
             # mirror into the provider block + ensure registry entry
             if prov is not None:

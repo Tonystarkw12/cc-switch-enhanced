@@ -2,7 +2,7 @@
 
 # `ccse` · cc-switch-enhanced
 
-**一行命令，给 25 个 AI 编程助手同时换模型 / 中转地址 / key**
+**一行命令，给 26 个 AI 编程助手同时换模型 / 中转地址 / key**
 
 专为「已用聚合 API（NewAPI / omniroute / 百炼 Coding Plan / 各种镜像站），换了订阅导致模型名、端点或 key 变了，要逐个 agent 改回来」的场景。`cc-switch` GUI 适配面太窄，本工具把适配铺开，并补上 subagent 跟随、端点探测、行为注入。
 
@@ -10,7 +10,7 @@
 [![python](https://img.shields.io/badge/python-%E2%89%A53.11-green)](#)
 [![platform](https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20win-lightgrey)](#)
 [![deps](https://img.shields.io/badge/deps-stdlib%20first%20%2B%202-success)](#)
-[![agents](https://img.shields.io/badge/adapters-25-orange)](#)
+[![agents](https://img.shields.io/badge/adapters-26-orange)](#)
 
 </div>
 
@@ -27,7 +27,7 @@
 - [安装](#安装)
 - [`ccse rules` —— 行为注入（caveman + rtk）](#ccse-rules--行为注入caveman--rtk)
 - [profile —— 多槽位配方](#profile--多槽位配方)
-- [adapter 覆盖（25 个）](#adapter-覆盖25-个)
+- [adapter 覆盖（26 个）](#adapter-覆盖26-个)
 - [verify —— 换完确认没改坏](#verify--换完确认没改坏)
 - [rewrite —— 项目内一键切 LLM 配置](#rewrite--项目内一键切-llm-配置)
 - [撤回机制](#撤回机制)
@@ -104,7 +104,7 @@ ccse profiles                 # 列已有 profile
 - `agent.slot = "name"`：`agent` 选 adapter，`slot` 选该 adapter 内字段。
 - profile 里省略的槽位**不动** → 可只切部分 agent。
 
-## adapter 覆盖（25 个）
+## adapter 覆盖（26 个）
 
 **结构化配置**（`--model` 改主槽位 + subagent；`--base-url`/`--api-key` 改对应字段）：
 
@@ -140,6 +140,7 @@ ccse profiles                 # 列已有 profile
 |---|---|---|
 | `kimi` | `KIMI_MODEL_NAME` / `KIMI_MODEL_API_KEY` | Kimi Code 模型名走 env provider `__kimi_env__` |
 | `copaw` | `COPAW_MODEL_NAME` / `COPAW_MODEL_API_KEY` | CoPAW 走 NewAPI fallback 的稳定引用 |
+| `nvim` | `NEWAPI_MODEL` / `NEWAPI_BASE_URL` / `NEWAPI_API_KEY` | minuet.nvim 读 env 变量（见 minuet.lua）；base_url 带/不带 `/v1` 均可（minuet 自行 strip 再拼） |
 
 envrc 适配器只改它声明的那一行 `export VAR=...`（单引号转义，`glm-5.2[1M]` 这类含特殊字符的名字也安全），rc 文件里其它内容一字不动；snapshot/undo 同样覆盖 `~/.zshrc`。
 
@@ -219,7 +220,7 @@ pipx/uv 装一个 CLI，stdlib（`argparse`/`tomllib`/`json`/`urllib`）为主�
 
 **ROADMAP**
 
-- [x] 25 adapter（claude/codex/opencode/gemini/qwen/cline + codebuddy/pi/openclaw/kilocode/reasonix/grok/forge/hermes/snow/crush/droid/memmy/prime/omp/openakita/jcode + kimi/copaw envrc）
+- [x] 26 adapter（claude/codex/opencode/gemini/qwen/cline + codebuddy/pi/openclaw/kilocode/reasonix/grok/forge/hermes/snow/crush/droid/memmy/prime/omp/openakita/jcode + kimi/copaw/nvim envrc）
 - [x] `--model NAME` 全量一键 + **subagent 跟随** + `--only`/`--exclude` + 保前缀 + claude 自动 `[1M]`
 - [x] `--base-url` / `--api-key` 全量一键（env 型写 ~/.zshrc、env_key 解析、codex 字面 api_key）
 - [x] `apply`/`diff` 双模式 + profile 多槽位 + `genprofile` 快照成 profile

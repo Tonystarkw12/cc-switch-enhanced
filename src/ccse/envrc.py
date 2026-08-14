@@ -15,7 +15,7 @@ import re
 from pathlib import Path
 
 from . import config
-from .registry import KIND_API_KEY, KIND_MODEL, Slot, register
+from .registry import KIND_API_KEY, KIND_BASE_URL, KIND_MODEL, Slot, register
 
 HOME = config.HOME
 
@@ -225,6 +225,16 @@ make_envrc_adapter(
     "copaw", "CoPAW",
     {"model": "COPAW_MODEL_NAME", "api_key": "COPAW_MODEL_API_KEY"},
     kinds={"api_key": KIND_API_KEY},
+)
+# Neovim (minuet.nvim): minuet.lua reads NEWAPI_MODEL / NEWAPI_BASE_URL /
+# NEWAPI_API_KEY env vars (see ~/.config/nvim/lua/plugins/minuet.lua), so we
+# switch via the shell rc like kimi/copaw rather than parsing lua. minuet.lua
+# strips a trailing /v1 off base_url then re-appends /v1/chat/completions, so
+# the value need not carry a /v1 suffix (unlike jcode).
+make_envrc_adapter(
+    "nvim", "Neovim (minuet)",
+    {"model": "NEWAPI_MODEL", "base_url": "NEWAPI_BASE_URL", "api_key": "NEWAPI_API_KEY"},
+    kinds={"base_url": KIND_BASE_URL, "api_key": KIND_API_KEY},
 )
 
 

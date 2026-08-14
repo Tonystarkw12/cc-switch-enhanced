@@ -266,8 +266,9 @@ def test_jcode_roundtrip(tmp_path: Path, monkeypatch):
     assert any("providers[newapi].default_model" in d for d in diffs)
     assert any("models" in d and "glm-5.2" in d for d in diffs)
     d = tomllib.loads(cfg.read_text())
-    assert d["provider"]["default_model"] == "glm-5.2"
-    assert d["providers"]["newapi"]["default_model"] == "glm-5.2"
+    assert d["provider"]["default_model"] == "newapi:glm-5.2"  # qualified "<provider>:<model>"
+    assert d["provider"]["default_provider"] == "newapi"  # stale "openai-compatible" ref corrected
+    assert d["providers"]["newapi"]["default_model"] == "glm-5.2"  # block-local stays bare
     assert any(m.get("id") == "glm-5.2" for m in d["providers"]["newapi"]["models"])
     # idempotent: re-applying same model adds no duplicate registry entry
     a.apply({"jcode.model": "glm-5.2"}, dry=False)
@@ -388,6 +389,41 @@ def test_envrc_kimi_zshrc(tmp_path, monkeypatch):
     # re-read equals new value
     again = cls()
     assert again.slots()[0].current == "glm-5.2[1M]"
+
+
+def test_envrc_nvim_minuet(tmp_path, monkeypatch):
+    """nvim (minuet) envrc adapter: 3 slots; base_url + api_key rewrite existing
+    export lines in place, model appends when the var is absent from the rc."""
+    from ccse import envrc as envrc_mod
+    from ccse.registry import KIND_API_KEY, KIND_BASE_URL
+    rc = tmp_path / ".zshrc"
+    rc.write_text(
+        "export NEWAPI_BASE_URL=http://192.168.0.14:6333\n"
+        "export NEWAPI_API_KEY='sk-old'\n"
+        "export OTHER=1\n", "utf-8")
+    monkeypatch.setattr(envrc_mod, "HOME", tmp_path, raising=False)
+    cls = envrc_mod.make_envrc_adapter(
+        "nvim_test", "Neovim Test",
+        {"model": "NEWAPI_MODEL", "base_url": "NEWAPI_BASE_URL", "api_key": "NEWAPI_API_KEY"},
+        path=rc, kinds={"base_url": KIND_BASE_URL, "api_key": KIND_API_KEY})
+    a = cls()
+    slots = {s.label: s for s in a.slots()}
+    assert slots["model"].current is None                       # var absent in rc
+    assert slots["base_url"].current == "http://192.168.0.14:6333"
+    assert slots["api_key"].current == "sk-old"
+    diffs = a.apply({
+        "nvim_test.model": "glm-5.2",
+        "nvim_test.base_url": "http://10.0.0.5/v1",
+        "nvim_test.api_key": "sk-new",
+    }, dry=False)
+    assert len(diffs) == 3
+    text = rc.read_text("utf-8")
+    assert "export NEWAPI_MODEL='glm-5.2'" in text               # appended
+    assert "export NEWAPI_BASE_URL='http://10.0.0.5/v1'" in text  # rewritten
+    assert "export NEWAPI_API_KEY='sk-new'" in text               # rewritten
+    assert "export OTHER=1" in text                               # untouched
+    assert "sk-old" not in text
+    assert text.count("NEWAPI_BASE_URL") == 1                    # no duplicate
 
 
 def test_envrc_in_sync_no_duplicate(tmp_path, monkeypatch):
