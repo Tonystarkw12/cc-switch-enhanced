@@ -27,7 +27,7 @@ _ENV_KEY_ADAPTERS = ("codex", "grok", "reasonix", "memmy", "omp", "prime")
 
 def _load_adapters():
     # import side-effect registers adapters
-    from . import claude, cline, codex, gemini, opencode, qwen, prime, openakita, jcode, dsh  # noqa: F401
+    from . import claude, cline, codex, gemini, opencode, qwen, prime, openakita, jcode, dsh, openclaude  # noqa: F401
     from . import extra, envrc  # noqa: F401
     return all_adapters()
 

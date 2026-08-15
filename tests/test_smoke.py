@@ -14,13 +14,14 @@ from ccse.registry import all_adapters
 
 def test_registry_loads_all_targets():
     from ccse import claude, cline, codex, gemini, opencode, qwen, prime  # noqa: F401
-    from ccse import openakita, jcode, dsh  # noqa: F401
+    from ccse import openakita, jcode, dsh, openclaude  # noqa: F401
     from ccse import extra  # noqa: F401
     ids = {a.id for a in all_adapters()}
     for expect in ("claude", "codex", "opencode", "gemini", "qwen", "cline",
                    "codebuddy", "pi", "openclaw", "kilocode", "reasonix",
                    "grok", "forge", "hermes", "snow", "crush", "droid",
-                   "memmy", "prime", "omp", "kilo", "openakita", "jcode", "dsh"):
+                   "memmy", "prime", "omp", "kilo", "openakita", "jcode",
+                   "dsh", "openclaude"):
         assert expect in ids, f"missing adapter {expect}"
 
 
@@ -327,6 +328,28 @@ def test_dsh_roundtrip(tmp_path: Path, monkeypatch):
     # slot now reflects written value
     assert a.slots()[0].current == "glm-5.2"
     dsh_mod.DshAdapter.path = config.HOME / ".dsh" / "settings.yaml"
+
+
+def test_openclaude_roundtrip(tmp_path: Path, monkeypatch):
+    """OpenClaude: env block write preserves existing settings (hooks etc.);
+    idempotent; endpoint slots write ANTHROPIC_BASE_URL/AUTH_TOKEN."""
+    from ccse import openclaude as oc_mod
+    cfg = tmp_path / "settings.json"
+    cfg.write_text(json.dumps({"hooks": {"Stop": [{"hooks": [{"command": "x"}]}]}}))
+    oc_mod.OpenClaudeAdapter.path = cfg  # type: ignore[misc]
+    a = oc_mod.OpenClaudeAdapter()
+    assert a.slots()[0].current is None
+    diffs = a.apply({"openclaude.model": "glm-5.2",
+                     "openclaude.base_url": "http://10.0.0.5/v1",
+                     "openclaude.api_key": "sk-new"}, dry=False)
+    assert len(diffs) == 3
+    after = json.loads(cfg.read_text())
+    assert after["env"]["ANTHROPIC_MODEL"] == "glm-5.2"
+    assert after["env"]["ANTHROPIC_BASE_URL"] == "http://10.0.0.5/v1"
+    assert after["env"]["ANTHROPIC_AUTH_TOKEN"] == "sk-new"
+    assert "Stop" in after["hooks"]  # preserved
+    assert a.apply({"openclaude.model": "glm-5.2"}, dry=False) == []  # idempotent
+    oc_mod.OpenClaudeAdapter.path = config.HOME / ".openclaude" / "settings.json"
 
 
 def test_jsonpath_list_selector_roundtrip():
