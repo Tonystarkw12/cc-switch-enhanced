@@ -14,14 +14,14 @@ from ccse.registry import all_adapters
 
 def test_registry_loads_all_targets():
     from ccse import claude, cline, codex, gemini, opencode, qwen, prime  # noqa: F401
-    from ccse import openakita, jcode, dsh, openclaude  # noqa: F401
+    from ccse import openakita, jcode, dsh, openclaude, openhands  # noqa: F401
     from ccse import extra  # noqa: F401
     ids = {a.id for a in all_adapters()}
     for expect in ("claude", "codex", "opencode", "gemini", "qwen", "cline",
                    "codebuddy", "pi", "openclaw", "kilocode", "reasonix",
                    "grok", "forge", "hermes", "snow", "crush", "droid",
                    "memmy", "prime", "omp", "kilo", "openakita", "jcode",
-                   "dsh", "openclaude"):
+                   "dsh", "openclaude", "openhands"):
         assert expect in ids, f"missing adapter {expect}"
 
 
@@ -350,6 +350,32 @@ def test_openclaude_roundtrip(tmp_path: Path, monkeypatch):
     assert "Stop" in after["hooks"]  # preserved
     assert a.apply({"openclaude.model": "glm-5.2"}, dry=False) == []  # idempotent
     oc_mod.OpenClaudeAdapter.path = config.HOME / ".openclaude" / "settings.json"
+
+
+def test_openhands_roundtrip(tmp_path: Path, monkeypatch):
+    """OpenHands: llm.{model,base_url,api_key} writes preserve the rest of the
+    Agent spec; idempotent; missing file => unavailable."""
+    from ccse import openhands as oh_mod
+    cfg = tmp_path / "agent_settings.json"
+    cfg.write_text(json.dumps({
+        "llm": {"model": "openai/gpt-5.6-sol", "base_url": "http://old/v1",
+                "api_key": "sk-old", "num_retries": 3},
+        "security": {"confirmation_mode": False},
+    }))
+    oh_mod.OpenHandsAdapter.path = cfg  # type: ignore[misc]
+    a = oh_mod.OpenHandsAdapter()
+    slots = {s.key: s.current for s in a.slots()}
+    assert slots["openhands.model"] == "openai/gpt-5.6-sol"
+    diffs = a.apply({"openhands.model": "glm-5.2",
+                     "openhands.base_url": "http://10.0.0.5/v1",
+                     "openhands.api_key": "sk-new"}, dry=False)
+    assert len(diffs) == 3
+    after = json.loads(cfg.read_text())
+    assert after["llm"]["model"] == "glm-5.2"
+    assert after["llm"]["num_retries"] == 3          # llm extras preserved
+    assert after["security"] == {"confirmation_mode": False}  # spec preserved
+    assert a.apply({"openhands.model": "glm-5.2"}, dry=False) == []  # idempotent
+    oh_mod.OpenHandsAdapter.path = config.HOME / ".openhands" / "agent_settings.json"
 
 
 def test_jsonpath_list_selector_roundtrip():
