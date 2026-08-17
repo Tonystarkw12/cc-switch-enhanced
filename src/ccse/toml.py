@@ -15,7 +15,9 @@ def load_toml_editable(path: Path):
         return None
     if not path.exists():
         return None
-    return tomlkit.parse(path.read_text("utf-8"))
+    # utf-8-sig: Windows tools often write a UTF-8 BOM; tomlkit's parser
+    # raises EmptyKeyError on it.
+    return tomlkit.parse(path.read_text("utf-8-sig"))
 
 
 def dump_toml(doc) -> str:

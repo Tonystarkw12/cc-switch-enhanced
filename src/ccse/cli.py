@@ -42,6 +42,17 @@ def _follow_keys(a) -> list[str]:
     return list(getattr(a, "follow", ()) or ())
 
 
+def _safe_slots(a) -> list:
+    """Adapter slots, or [] + a warning when the agent's config exists but
+    can't be parsed (corrupt/foreign encoding). One broken agent must never
+    abort a fleet-wide switch."""
+    try:
+        return a.slots()
+    except Exception as ex:  # noqa: BLE001
+        config.info(f"ccse: skip {a.id}: unreadable config ({type(ex).__name__}: {ex})")
+        return []
+
+
 def _filter_adapters(adapters, only: str | None, exclude: str | None):
     onlyset = {s.strip() for s in only.split(",")} if only else None
     excl = {s.strip() for s in exclude.split(",")} if exclude else None
@@ -71,7 +82,7 @@ def cmd_show(args) -> int:
     adapters = _filter_adapters(_load_adapters(), args.only, args.exclude)
     any_slot = False
     for a in adapters:
-        slots = a.slots()
+        slots = _safe_slots(a)
         if not slots:
             continue
         head = f"[{a.id}] {a.name}  {'(installed)' if a.available else '(missing)'}"
@@ -214,7 +225,7 @@ def _model_assignments(name: str, only, exclude, keep_prefix: bool = True) -> di
     for a in adapters:
         if not a.available:
             continue
-        slots = {s.key: s for s in a.slots()}
+        slots = {s.key: s for s in _safe_slots(a)}
         keys = [_primary_key(a), *_follow_keys(a)]
         keys += [s.key for s in slots.values()
                  if getattr(s, "follows", False) and s.key not in keys]
@@ -235,7 +246,7 @@ def _endpoint_assignments(kind: str, value: str, only, exclude) -> dict[str, str
     for a in adapters:
         if not a.available:
             continue
-        for s in a.slots():
+        for s in _safe_slots(a):
             if s.kind == kind:
                 out[s.key] = value
     return out
@@ -293,7 +304,7 @@ def cmd_genprofile(args) -> int:
     adapters = _load_adapters()
     flat: dict[str, str] = {}
     for a in adapters:
-        for s in a.slots():
+        for s in _safe_slots(a):
             if s.current:
                 flat[s.key] = s.current
     name = args.name or "snapshot"
@@ -419,7 +430,7 @@ def cmd_verify(args) -> int:
         if not a.available:
             results.append((a.id, "SKIP", "not installed"))
             continue
-        slots = a.slots()
+        slots = _safe_slots(a)
         model = next((s.current for s in slots if s.kind == KIND_MODEL and s.current), None)
         base = next((s.current for s in slots if s.kind == KIND_BASE_URL), None)
         key = next((s.current for s in slots if s.kind == KIND_API_KEY), None)

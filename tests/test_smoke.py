@@ -1456,3 +1456,23 @@ def test_prime_api_key_literal(tmp_path: Path, monkeypatch):
 if __name__ == "__main__":
     import pytest
     sys.exit(pytest.main([__file__, "-v"]))
+
+def test_bom_toml_and_broken_config_skip(tmp_path: Path, monkeypatch):
+    """Windows: a UTF-8-BOM (or corrupt) agent config must not abort a fleet
+    switch — BOM toml parses via utf-8-sig; a genuinely broken file makes
+    _safe_slots skip the adapter with a warning instead of raising."""
+    from ccse import toml as tomlh
+    from ccse.extra import GrokAdapter
+    import ccse.cli as cli_mod
+    bom = tmp_path / "bom.toml"
+    bom.write_bytes(b"\xef\xbb\xbfmodel = \"gpt-5.6-sol\"\n")
+    doc = tomlh.load_toml_editable(bom)
+    assert doc is not None and "model" in doc  # BOM no longer breaks tomlkit
+    # broken config → adapter skipped, others still collected
+    bad = tmp_path / "bad.toml"
+    bad.write_text("= not toml at all\n")
+    GrokAdapter.path = bad  # type: ignore[misc]
+    monkeypatch.setattr(cli_mod, "_load_adapters", lambda: [GrokAdapter()])
+    monkeypatch.setattr(cli_mod, "_filter_adapters", lambda ads, o, e: ads)
+    assert cli_mod._model_assignments("glm-5.2", None, None) == {}  # skipped, no raise
+    GrokAdapter.path = config.HOME / ".grok" / "config.toml"
