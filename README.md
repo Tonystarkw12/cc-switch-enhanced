@@ -130,7 +130,7 @@ ccse profiles                 # 列已有 profile
 | `hermes` | `~/.hermes/config.yaml` | YAML | `model.default` | `model.base_url` | `model.api_key` |
 | `omp` | `~/.omp/agent/config.yml` | YAML | `llm.model` + `defaultModel` + `modelRoles.default`（保 `provider/` 前缀和 `:level`） | `llm.baseUrl` | `llm.apiKey` 的 `${ENV_VAR}` → ~/.zshrc / setx |
 | `memmy` | `~/.memmy/config.yaml` | YAML | `agents.defaults.model` | 活动 provider `apiBase` | `apiKey` 的 `${ENV_VAR}` → ~/.zshrc / setx |
-| `prime` | `~/.prime/agent/settings.json` + `models.json` | JSON | `defaultModel`（自动修复悬空 `defaultProvider` + 同步 provider 目录） | `providers.<active>.baseUrl` | env（`apiKey` 指向变量名） |
+| `prime` | `~/.prime/agent/settings.json` + `models.json` | JSON | `defaultModel`（自动修复悬空 `defaultProvider` + 同步 provider 目录） | `providers.<active>.baseUrl` | `providers.<active>.apiKey`（**字面 key**，自动内联裸变量名） |
 | `openakita` | `~/.openakita/data/llm_endpoints.json` | JSON | `endpoints[0].model`（priority:1 优先） | `endpoints[0].base_url` | key 在 ~/.env（`api_key_env` 指向） |
 | `jcode` | `~/.jcode/config.toml` | TOML | `[provider].default_model`（+镜像 provider 块 + `[[...models]]` 注册表） | `providers.<active>.base_url` | `api_key_env` → ~/.zshrc |
 

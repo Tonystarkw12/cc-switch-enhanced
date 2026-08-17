@@ -4,21 +4,25 @@ own provider catalog.
 Prime resolves the active model from ``settings.json``'s ``defaultModel``
 (paired with ``defaultProvider``), NOT from the ``env.ANTHROPIC_MODEL`` block —
 that env block is inert here. The model must exist in ``models.json`` under the
-active provider (``providers.<defaultProvider>.models``), where base_url and the
-apiKey env-var name also live. ``--model`` writes all three: settings
-defaultModel, the provider's model catalog entry, and the recentModels list.
+active provider (``providers.<defaultProvider>.models``), where base_url and
+the LITERAL apiKey also live (pi-family format: an env-var *name* in apiKey is
+sent verbatim as the bearer token and the gateway 401s). ``--model`` writes
+settings defaultModel, the provider's model catalog entry, and the
+recentModels list; a bare env-var name found in apiKey is inlined from the
+environment.
 
 Reuses no ClaudeAdapter logic — the config semantics are different.
 """
 from __future__ import annotations
 
 import json
+import re
 
 from . import config
 from .registry import KIND_API_KEY, KIND_BASE_URL, KIND_MODEL, Adapter, Slot, register
 
 MODELS_JSON = config.HOME / ".prime" / "agent" / "models.json"
-ENV_NAME = "OPENAI_API_KEY"  # models.json apiKey is a bare env-var name
+_ENV_NAME_RE = re.compile(r"[A-Z][A-Z0-9_]*")
 
 
 @register
@@ -147,15 +151,26 @@ class PrimeAdapter:
                     if not dry:
                         prov["baseUrl"] = base_url
                         m_dirty = True
-            if "api_key" in relevant:
-                var = prov.get("apiKey") or ENV_NAME
-                old_key = os.environ.get(var)
-                if old_key != relevant["api_key"]:
+            # models.json apiKey holds the LITERAL key (pi-family format —
+            # pi's own models.json stores literals; an env-var name here is
+            # sent verbatim as the bearer and the gateway 401s). Inline a
+            # bare env-var name when that variable is set.
+            cur_key = prov.get("apiKey")
+            if isinstance(cur_key, str) and _ENV_NAME_RE.fullmatch(cur_key):
+                lit = os.environ.get(cur_key)
+                if lit:
+                    diffs.append(f"  providers[{pname}].apiKey: {cur_key!r} -> "
+                                 f"{config.redact(lit)!r} (env inlined)")
                     if not dry:
-                        from .envrc import ensure_env_var
-                        ensure_env_var(var, relevant["api_key"])
-                    diffs.append(f"  env {var}: {config.redact(old_key)!r} -> "
-                                 f"{config.redact(relevant['api_key'])!r}")
+                        prov["apiKey"] = lit
+                        m_dirty = True
+            if "api_key" in relevant and prov.get("apiKey") != relevant["api_key"]:
+                diffs.append(f"  providers[{pname}].apiKey: "
+                             f"{config.redact(prov.get('apiKey'))!r} -> "
+                             f"{config.redact(relevant['api_key'])!r}")
+                if not dry:
+                    prov["apiKey"] = relevant["api_key"]
+                    m_dirty = True
         if m_dirty and not dry:
             config.keep_mode_write_json(MODELS_JSON, m)
         if s_dirty and not dry:

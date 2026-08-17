@@ -1343,6 +1343,33 @@ def test_grok_adapter(tmp_path, monkeypatch):
     assert cfg.read_text() == before
 
 
+def test_prime_api_key_literal(tmp_path: Path, monkeypatch):
+    """prime models.json apiKey holds the LITERAL key (pi-family format);
+    a bare env-var name is inlined from the environment, --api-key writes
+    the literal directly."""
+    from ccse import prime as prime_mod
+    settings = tmp_path / "settings.json"
+    models = tmp_path / "models.json"
+    settings.write_text(json.dumps({"defaultProvider": "newapi",
+                                    "defaultModel": "m1"}))
+    models.write_text(json.dumps({"providers": {"newapi": {
+        "baseUrl": "http://h/v1", "apiKey": "OPENAI_API_KEY",
+        "models": [{"id": "m1", "name": "M1"}]}}}))
+    monkeypatch.setattr(prime_mod, "MODELS_JSON", models, raising=False)
+    monkeypatch.setattr(prime_mod.PrimeAdapter, "path", settings, raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    a = prime_mod.PrimeAdapter()
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-from-env")
+    a.apply({"prime.default_model": "m1"}, dry=False)  # model-only: heal inlines
+    assert json.loads(models.read_text())["providers"]["newapi"]["apiKey"] == \
+        "sk-from-env"
+
+    a.apply({"prime.api_key": "sk-direct"}, dry=False)
+    assert json.loads(models.read_text())["providers"]["newapi"]["apiKey"] == \
+        "sk-direct"
+
+
 if __name__ == "__main__":
     import pytest
     sys.exit(pytest.main([__file__, "-v"]))
