@@ -57,8 +57,11 @@ class OpenCodeAdapter:
             return []
         d = config.load_json(self.path) or {}
         diffs: list[str] = []
+        orig_model = d.get("model")  # limit schema source for new catalog entries
+        refs: set[str] = set()  # every prov/model ref assigned this call
         top = f"{self.id}.model"
         if top in relevant:
+            refs.add(relevant[top])
             old = d.get("model")
             if old != relevant[top]:
                 diffs.append(f"  model: {old!r} -> {relevant[top]!r}")
@@ -70,12 +73,36 @@ class OpenCodeAdapter:
                 rest = key[len(prefix):]  # e.g. build.model
                 role, _, field = rest.partition(".")
                 if role and field == "model":
+                    refs.add(val)
                     agent = d.setdefault("agent", {}).setdefault(role, {})
                     old = agent.get("model")
                     if old != val:
                         diffs.append(f"  agent.{role}.model: {old!r} -> {val!r}")
                         if not dry:
                             agent["model"] = val
+        # catalog sync: opencode resolves `prov/model` against
+        # provider.<prov>.models and falls back when the entry is missing,
+        # so every assigned ref must exist there (runs even when the model
+        # string already matches — the entry may still be absent)
+        for ref in sorted(refs):
+            if not isinstance(ref, str) or "/" not in ref:
+                continue
+            prov, bare = ref.split("/", 1)
+            models = d.setdefault("provider", {}).setdefault(prov, {}) \
+                       .setdefault("models", {})
+            if bare in models:
+                continue
+            entry: dict = {"name": bare}
+            if isinstance(orig_model, str) and "/" in orig_model:
+                op, ob = orig_model.split("/", 1)
+                src = ((d.get("provider") or {}).get(op) or {}) \
+                    .get("models", {}).get(ob)
+                if isinstance(src, dict) and "limit" in src:
+                    entry = {"limit": src["limit"], "name": bare}
+            diffs.append(f"  provider.{prov}.models[{bare}]: (created)"
+                         + (" +limit" if "limit" in entry else ""))
+            if not dry:
+                models[bare] = entry
         # endpoint slots
         prov = self._provider(d)
         if prov:

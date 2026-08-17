@@ -112,7 +112,7 @@ ccse profiles                 # 列已有 profile
 |---|---|---|---|---|---|
 | `claude` | `~/.claude/settings.json` | JSON | `env.ANTHROPIC_MODEL`（自动 `[1M]`）+ `CLAUDE_CODE_SUBAGENT_MODEL` | `env.ANTHROPIC_BASE_URL` | `env.ANTHROPIC_AUTH_TOKEN` |
 | `codex` | `~/.codex/config.toml` | TOML | 顶层 `model` | 活动 provider `base_url` | `env_key` → ~/.zshrc，或字面 `api_key` |
-| `opencode` | `~/.config/opencode/opencode.json` | JSON | `model` + `agent.{build,explore,general,plan}.model` | `provider.<active>.options.baseURL` | `provider.<active>.options.apiKey` |
+| `opencode` | `~/.config/opencode/opencode.json` | JSON | `model` + `agent.{build,explore,general,plan}.model`（同步 `provider.<active>.models` 目录） | `provider.<active>.options.baseURL` | `provider.<active>.options.apiKey` |
 | `gemini` | `~/.gemini/.env` | env | `GEMINI_MODEL` | `GOOGLE_GEMINI_BASE_URL` | `GEMINI_API_KEY` |
 | `qwen` | `~/.qwen/settings.json` | JSON | `model.name` | `model.baseUrl` | `env.<provider envKey>` |
 | `cline` | `~/.cline/data/settings/providers.json` | JSON | `providers[lastUsed].settings.model` | — | — |

@@ -1179,6 +1179,53 @@ def test_codebuddy_adapter(tmp_path: Path, monkeypatch):
     assert json.loads(settings.read_text())["model"] == "custom-local:gpt-5.6-terra"
 
 
+def test_opencode_catalog_sync(tmp_path: Path, monkeypatch):
+    """opencode: `prov/model` refs must exist in provider.<prov>.models —
+    opencode falls back to the previous model when the entry is missing."""
+    from ccse import opencode as oc_mod
+    cfg = tmp_path / "opencode.json"
+    cfg.write_text(json.dumps({
+        "model": "newapi/deepseek-v4-flash",
+        "agent": {"build": {"model": "newapi/deepseek-v4-flash"}},
+        "provider": {"newapi": {
+            "npm": "@ai-sdk/openai-compatible",
+            "options": {"baseURL": "http://host:6333/v1", "apiKey": "sk-1"},
+            "models": {"deepseek-v4-flash": {
+                "name": "deepseek-v4-flash",
+                "limit": {"context": 1000000, "output": 65536}}},
+        }},
+    }))
+    monkeypatch.setattr(oc_mod.OpenCodeAdapter, "path", cfg, raising=False)
+    a = oc_mod.OpenCodeAdapter()
+
+    diffs = a.apply({"opencode.model": "newapi/qwen3.8:27b",
+                     "opencode.agent.build.model": "newapi/qwen3.8:27b"},
+                    dry=False)
+    d = json.loads(cfg.read_text())
+    assert d["model"] == "newapi/qwen3.8:27b"
+    assert d["agent"]["build"]["model"] == "newapi/qwen3.8:27b"
+    entry = d["provider"]["newapi"]["models"]["qwen3.8:27b"]
+    assert entry["name"] == "qwen3.8:27b"
+    assert entry["limit"] == {"context": 1000000, "output": 65536}  # copied
+    assert any("models[qwen3.8:27b]" in x and "(created)" in x for x in diffs)
+
+    # rerun with model already in sync but entry missing -> entry still created
+    del d["provider"]["newapi"]["models"]["qwen3.8:27b"]
+    cfg.write_text(json.dumps(d))
+    assert a.apply({"opencode.model": "newapi/qwen3.8:27b"}, dry=False)
+    assert "qwen3.8:27b" in json.loads(cfg.read_text())["provider"]["newapi"]["models"]
+
+    # bare name (no provider/) -> no catalog touch
+    cfg.write_text(json.dumps({"model": "glm-5.2", "provider": {}}))
+    a.apply({"opencode.model": "kimi-k4"}, dry=False)
+    assert json.loads(cfg.read_text())["provider"] == {}
+
+    # dry run writes nothing
+    cfg.write_text(json.dumps({"model": "newapi/a"}))
+    assert a.apply({"opencode.model": "newapi/b"}, dry=True)
+    assert json.loads(cfg.read_text()) == {"model": "newapi/a"}
+
+
 if __name__ == "__main__":
     import pytest
     sys.exit(pytest.main([__file__, "-v"]))
