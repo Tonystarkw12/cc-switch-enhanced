@@ -980,7 +980,8 @@ def test_forge_adapter(tmp_path, monkeypatch):
     credentials.json; other providers untouched."""
     from ccse import extra as extra_mod
     toml_f = tmp_path / ".forge.toml"
-    toml_f.write_text('[session]\nprovider_id = "openai_compatible"\n'
+    toml_f.write_text('merge_system_messages = false\n'
+                      '[session]\nprovider_id = "openai_compatible"\n'
                       'model_id = "krill/deepseek-v4-flash"\n')
     creds_f = tmp_path / ".credentials.json"
     creds_f.write_text(json.dumps([
@@ -1000,8 +1001,15 @@ def test_forge_adapter(tmp_path, monkeypatch):
     diffs = a.apply({"forge.model": "krill/gpt-5.6-luna",
                      "forge.base_url": "http://b", "forge.api_key": "sk-2"},
                     dry=False)
-    assert len(diffs) == 3
+    assert len(diffs) == 4
     assert 'model_id = "krill/gpt-5.6-luna"' in toml_f.read_text()
+    assert 'merge_system_messages = true' in toml_f.read_text()
+    # rerun with model already in sync but flag reset -> flag still healed
+    toml_f.write_text(toml_f.read_text().replace(
+        'merge_system_messages = true', 'merge_system_messages = false'))
+    heal = a.apply({"forge.model": "krill/gpt-5.6-luna"}, dry=False)
+    assert any("merge_system_messages" in x for x in heal)
+    assert 'merge_system_messages = true' in toml_f.read_text()
     c = json.loads(creds_f.read_text())
     assert c[0]["url_params"]["OPENAI_URL"] == "http://b"
     assert c[0]["auth_details"]["api_key"] == "sk-2"

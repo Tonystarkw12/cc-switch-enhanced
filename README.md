@@ -124,7 +124,7 @@ ccse profiles                 # 列已有 profile
 | `snow` | `~/.snow/config.json` | JSON | `snowcfg.advancedModel`（+`basicModel`） | `snowcfg.baseUrl` | `snowcfg.apiKey` |
 | `reasonix` | `~/.reasonix/config.toml` | TOML | 活动 `[[providers]]` 的 `model` | 活动 provider `base_url` | `api_key_env` → ~/.zshrc |
 | `grok` | `~/.grok/config.toml` | TOML | `[models].default` | `[model."<def>"].base_url` | `env_key` → ~/.zshrc |
-| `forge` | `~/.forge/.forge.toml` | TOML | `[session].model_id` | — | — |
+| `forge` | `~/.forge/.forge.toml` | TOML | `[session].model_id`（自动 `merge_system_messages=true`） | — | — |
 | `crush` | `~/.config/crush/crush.json` + `~/.local/share/crush/providers.json` | JSON | 已配置 provider 的 `default_large_model_id` | `providers.<id>.base_url` | `providers.<id>.api_key` |
 | `droid` | `~/.factory/settings.json` | JSON | `sessionDefaultSettings.model`（**组合 id**，非裸模型名） | 活动 `customModels[].baseUrl` | 活动 `customModels[].apiKey` |
 | `hermes` | `~/.hermes/config.yaml` | YAML | `model.default` | `model.base_url` | `model.api_key` |

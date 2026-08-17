@@ -581,7 +581,8 @@ class ForgeAdapter:
 
     Model = session.model_id; active provider = session.provider_id; its
     base_url/api_key live on the matching entry in credentials.json
-    (url_params.OPENAI_URL / auth_details.api_key)."""
+    (url_params.OPENAI_URL / auth_details.api_key). `--model` also forces
+    merge_system_messages=true (see note in apply)."""
     id = "forge"
     name = "Forge"
     primary = "forge.model"
@@ -658,6 +659,17 @@ class ForgeAdapter:
                 diffs.append(f"  session.model_id: {old!r} -> {relevant['model']!r}")
                 if not dry:
                     sess["model_id"] = relevant["model"]
+            # ollama/vLLM-backed gateways reject system messages after the
+            # first turn ("system message must be at the beginning"); forge's
+            # merge_system_messages=true folds all system messages into a
+            # single leading one. Ensure it whenever ccse switches the model,
+            # or such a gateway 500s on the first mid-conversation system
+            # send. Runs even when model_id already matches (config resets).
+            if d.get("merge_system_messages") is not True:
+                diffs.append(f"  merge_system_messages: "
+                             f"{d.get('merge_system_messages')!r} -> True")
+                if not dry:
+                    d["merge_system_messages"] = True
         pid = sess.get("provider_id")
         creds = self._creds()
         entry = next((c for c in creds if isinstance(c, dict) and c.get("id") == pid),
