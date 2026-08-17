@@ -1025,7 +1025,9 @@ def test_crush_adapter(tmp_path, monkeypatch):
                                                      "base_url": "http://a",
                                                      "api_key": "sk-1"}}}))
     provs = tmp_path / "providers.json"
-    provs.write_text(json.dumps([{"id": "zai", "default_large_model_id": "glm-5.2"}]))
+    provs.write_text(json.dumps([{"id": "zai", "default_large_model_id": "glm-5.2",
+                                  "models": [{"id": "glm-5.2", "name": "GLM 5.2",
+                                              "context_window": 200000}]}]))
 
     monkeypatch.setattr(extra_mod, "HOME", tmp_path, raising=False)
     cls = type("_CrushTest", (extra_mod.CrushAdapter,), {
@@ -1040,11 +1042,44 @@ def test_crush_adapter(tmp_path, monkeypatch):
     diffs = a.apply({"crush.model": "deepseek-v4-flash",
                      "crush.base_url": "http://b",
                      "crush.api_key": "sk-2"}, dry=False)
-    assert len(diffs) == 3
-    assert json.loads(provs.read_text())[0]["default_large_model_id"] == "deepseek-v4-flash"
+    assert len(diffs) == 4  # default_large + models[] entry + url + key
+    cat = json.loads(provs.read_text())[0]
+    assert cat["default_large_model_id"] == "deepseek-v4-flash"
+    ids = [m["id"] for m in cat["models"]]
+    assert "deepseek-v4-flash" in ids and "glm-5.2" in ids
     after = json.loads(cfg.read_text())
     assert after["providers"]["zai"]["base_url"] == "http://b"
     assert after["providers"]["zai"]["api_key"] == "sk-2"
+
+
+def test_prime_dangling_provider_repointed(tmp_path: Path, monkeypatch):
+    """prime: defaultProvider absent from models.json -> repointed to the
+    sole provider, else the model never resolves and catalog sync is
+    skipped."""
+    from ccse import prime as prime_mod
+    settings = tmp_path / "settings.json"
+    models = tmp_path / "models.json"
+    settings.write_text(json.dumps({
+        "defaultProvider": "opencode-go",
+        "defaultModel": "deepseek-v4-flash",
+    }))
+    models.write_text(json.dumps({"providers": {"newapi": {
+        "baseUrl": "http://host:6333/v1",
+        "api": "openai-completions",
+        "apiKey": "OPENAI_API_KEY",
+        "models": [{"id": "deepseek-v4-flash", "name": "Deepseek V4 Flash"}],
+    }}}))
+    monkeypatch.setattr(prime_mod, "MODELS_JSON", models, raising=False)
+    monkeypatch.setattr(prime_mod.PrimeAdapter, "path", settings, raising=False)
+    a = prime_mod.PrimeAdapter()
+
+    diffs = a.apply({"prime.default_model": "qwen3.8:27b"}, dry=False)
+    s = json.loads(settings.read_text())
+    m = json.loads(models.read_text())
+    assert s["defaultProvider"] == "newapi"
+    assert s["defaultModel"] == "qwen3.8:27b"
+    assert m["providers"]["newapi"]["models"][0]["id"] == "qwen3.8:27b"
+    assert any("defaultProvider" in d and "newapi" in d for d in diffs)
 
 
 def test_droid_adapter(tmp_path, monkeypatch):

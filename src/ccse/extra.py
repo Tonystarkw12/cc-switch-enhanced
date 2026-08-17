@@ -807,6 +807,21 @@ class CrushAdapter:
                         entry["default_large_model_id"] = relevant["model"]
                         config.keep_mode_write_json(self._providers_path(), cat)
                         model_written = True
+                # crush resolves default_large_model_id against the
+                # provider's models[] list — append a minimal entry when
+                # absent (runs even when default already matches, to heal)
+                models = entry.get("models")
+                if not isinstance(models, list):
+                    models = entry["models"] = []
+                if not any(isinstance(x, dict) and x.get("id") == relevant["model"]
+                           for x in models):
+                    models.append({"id": relevant["model"],
+                                   "name": relevant["model"]})
+                    diffs.append(f"  providers[{pid}].models[{relevant['model']!r}]: "
+                                 "(created)")
+                    if not dry:
+                        config.keep_mode_write_json(self._providers_path(), cat)
+                        model_written = True
         d = config.load_json(self.path) or {}
         provs = d.setdefault("providers", {})
         p = provs.setdefault(pid, {})

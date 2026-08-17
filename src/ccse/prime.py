@@ -89,6 +89,18 @@ class PrimeAdapter:
         old_model = s.get("defaultModel")
         diffs: list[str] = []
         s_dirty = m_dirty = False
+        # settings.defaultProvider dangling (absent from models.json) — the
+        # model never resolves and the catalog sync below would be skipped;
+        # repoint to the sole configured provider
+        if prov is None:
+            cand = next(iter(m.get("providers") or {}), None)
+            if isinstance(cand, str):
+                diffs.append(f"  defaultProvider: {pname!r} -> {cand!r} "
+                             "(absent from models.json)")
+                pname, prov = cand, m["providers"][cand]
+                if not dry:
+                    s["defaultProvider"] = cand
+                    s_dirty = True
 
         # 1. settings.json — defaultModel (+ recentModels follow)
         if new_model is not None and new_model != old_model:
