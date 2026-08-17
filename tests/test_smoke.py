@@ -240,6 +240,36 @@ def test_codex_literal_api_key(tmp_path: Path, monkeypatch):
     codex_mod.CodexAdapter.path = config.HOME / ".codex" / "config.toml"
 
 
+def test_codex_releases_openai_auth_on_gateway(tmp_path: Path):
+    """requires_openai_auth=true + non-OpenAI base_url bricks codex (OAuth
+    demanded, api_key ignored); switching base_url via ccse must release it.
+    api.openai.com providers keep the flag."""
+    import tomllib
+    from ccse import codex as codex_mod
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        'model = "m"\nmodel_provider = "krill"\n'
+        '[model_providers.krill]\nname = "OpenAI"\n'
+        'base_url = "http://192.168.0.14:6333/v1"\n'
+        'requires_openai_auth = true\n')
+    codex_mod.CodexAdapter.path = cfg  # type: ignore[misc]
+    a = codex_mod.CodexAdapter()
+    diffs = a.apply({"codex.base_url": "http://10.0.0.5/v1"}, dry=False)
+    assert any("requires_openai_auth" in d and "false" in d for d in diffs)
+    d = tomllib.loads(cfg.read_text())
+    assert d["model_providers"]["krill"]["requires_openai_auth"] is False
+    assert d["model_providers"]["krill"]["base_url"] == "http://10.0.0.5/v1"
+    # OpenAI-host provider keeps the flag
+    cfg.write_text(
+        'model = "m"\nmodel_provider = "oai"\n'
+        '[model_providers.oai]\nbase_url = "https://api.openai.com/v1"\n'
+        'requires_openai_auth = true\n')
+    a.apply({"codex.base_url": "https://api.openai.com/v1"}, dry=False)
+    d = tomllib.loads(cfg.read_text())
+    assert d["model_providers"]["oai"]["requires_openai_auth"] is True
+    codex_mod.CodexAdapter.path = config.HOME / ".codex" / "config.toml"
+
+
 def test_jcode_roundtrip(tmp_path: Path, monkeypatch):
     """JCode: model writes mirror into the provider block + registry; a stale
     default_provider falls back to the first providers.* block; api_key env-var
