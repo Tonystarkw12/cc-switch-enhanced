@@ -116,7 +116,7 @@ ccse profiles                 # 列已有 profile
 | `gemini` | `~/.gemini/.env` | env | `GEMINI_MODEL` | `GOOGLE_GEMINI_BASE_URL` | `GEMINI_API_KEY` |
 | `qwen` | `~/.qwen/settings.json` | JSON | `model.name` | `model.baseUrl` | `env.<provider envKey>` |
 | `cline` | `~/.cline/data/settings/providers.json` | JSON | `providers[lastUsed].settings.model` | — | — |
-| `codebuddy` | `~/.codebuddy/settings.json` | JSON | `model` | — | — |
+| `codebuddy` | `~/.codebuddy/settings.json` | JSON | `model`（保 `custom-local:` 前缀 + 同步 `models.json` 目录） | — | — |
 | `pi` | `~/.pi/agent/settings.json` | JSON | `llm.model`（+`defaultModel`） | `llm.baseUrl` | `llm.apiKey` |
 | `openclaw` | `~/.openclaw/openclaw.json` | JSON | `agents.defaults.model.primary`（+subagent） | `models.providers.<active>.baseUrl` | `models.providers.<active>.apiKey` |
 | `kilocode` | `~/.kilocode/cli/config.json` | JSON | `providers[newapi].apiModelId` | `providers[newapi].openAiBaseUrl` | `providers[newapi].openAiApiKey` |

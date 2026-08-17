@@ -39,12 +39,95 @@ def _load_yaml(path: Path):
 
 # ───────────────────────── JSON-path adapters ──────────────────────────
 
-# CodeBuddy: ~/.codebuddy/settings.json top-level "model"
-make_adapter(
-    "codebuddy", "CodeBuddy",
-    HOME / ".codebuddy" / "settings.json",
-    {"model": "model"},
-)
+# CodeBuddy: ~/.codebuddy/settings.json "model" + models.json catalog.
+# Hand-rolled — a bare model name alone silently fails (see CodeBuddyAdapter).
+
+
+@register
+class CodeBuddyAdapter:
+    """CodeBuddy ~/.codebuddy/settings.json + ~/.codebuddy/models.json.
+
+    settings.json "model" is either a bare built-in name or a
+    ``custom-local:<id>`` reference resolving to a models.json ``models[]``
+    entry (url/apiKey live there). CodeBuddy silently keeps the previous
+    model when the ref doesn't resolve, so `--model NAME` must keep the
+    ``custom-local:`` prefix AND have a catalog entry — like kilo, we append
+    one (copying url/apiKey from an existing entry) when missing. A bare
+    NAME is treated as a gateway model whenever a catalog exists; only a
+    never-customized install (no models.json entries) keeps it bare."""
+    id = "codebuddy"
+    name = "CodeBuddy"
+    primary = "codebuddy.model"
+    path = HOME / ".codebuddy" / "settings.json"
+    MODELS = HOME / ".codebuddy" / "models.json"
+    PREFIX = "custom-local:"
+
+    @property
+    def available(self):
+        return self.path.exists()
+
+    def _catalog(self):
+        d = config.load_json(self.MODELS) or {}
+        lst = d.get("models")
+        if not isinstance(lst, list):
+            lst = d.setdefault("models", [])
+        return d, lst
+
+    def _entry(self, lst, mid):
+        for e in lst:
+            if isinstance(e, dict) and e.get("id") == mid:
+                return e
+        return None
+
+    def slots(self):
+        if not self.available:
+            return []
+        s = config.load_json(self.path) or {}
+        return [Slot(key="codebuddy.model", label="model", current=s.get("model"))]
+
+    def apply(self, assignments, dry=False):
+        relevant = {k[len("codebuddy."):]: v for k, v in assignments.items()
+                    if k.startswith("codebuddy.")}
+        if not relevant or not self.available:
+            return []
+        name = relevant.get("model")
+        if name is None:
+            return []
+        s = config.load_json(self.path) or {}
+        mdoc, lst = self._catalog()
+        diffs: list[str] = []
+        s_dirty = m_dirty = False
+
+        if name.startswith(self.PREFIX):
+            target, bare = name, name[len(self.PREFIX):]
+        else:
+            bare = name
+            target = self.PREFIX + name if lst else name
+
+        if s.get("model") != target:
+            diffs.append(f"  model: {s.get('model')!r} -> {target!r}")
+            if not dry:
+                s["model"] = target
+                s_dirty = True
+
+        if target.startswith(self.PREFIX) and self._entry(lst, bare) is None:
+            src = next((e for e in lst if isinstance(e, dict)), None)
+            entry = dict(src) if src else {
+                "vendor": "NewAPI", "supportsToolCall": True,
+                "supportsImages": False, "supportsReasoning": True,
+            }
+            entry["id"] = bare
+            entry["name"] = bare
+            diffs.append(f"  models[{bare!r}]: (created)"
+                         + (f" copied from {src.get('id')!r}" if src else ""))
+            if not dry:
+                lst.append(entry)
+                m_dirty = True
+        if m_dirty and not dry:
+            config.keep_mode_write_json(self.MODELS, mdoc)
+        if s_dirty and not dry:
+            config.keep_mode_write_json(self.path, s)
+        return diffs
 
 # PI (lazyypi): ~/.pi/agent/settings.json + models.json. Pi resolves the
 # active model from defaultModel and requires that model in the active

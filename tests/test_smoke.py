@@ -1128,6 +1128,57 @@ def test_endpoint_assignments_filters_by_kind():
     assert got2 == {"x.api_key": "sk-2"}
 
 
+def test_codebuddy_adapter(tmp_path: Path, monkeypatch):
+    """codebuddy: bare --model keeps `custom-local:` prefix and gains a
+    models.json catalog entry (codebuddy silently falls back to the previous
+    model when the ref doesn't resolve)."""
+    from ccse import extra as extra_mod
+    settings = tmp_path / "settings.json"
+    models = tmp_path / "models.json"
+    settings.write_text(json.dumps({"model": "custom-local:gpt-5.6-terra"}))
+    models.write_text(json.dumps({"models": [{
+        "id": "gpt-5.6-terra", "name": "gpt-5.6-terra", "vendor": "NewAPI",
+        "url": "http://host:6333/v1/chat/completions", "apiKey": "sk-old",
+    }]}))
+    monkeypatch.setattr(extra_mod.CodeBuddyAdapter, "path", settings,
+                        raising=False)
+    monkeypatch.setattr(extra_mod.CodeBuddyAdapter, "MODELS", models,
+                        raising=False)
+    a = extra_mod.CodeBuddyAdapter()
+
+    # 1. bare name -> prefixed + catalog entry copying url/apiKey
+    diffs = a.apply({"codebuddy.model": "qwen3.8:27b"}, dry=False)
+    s = json.loads(settings.read_text())
+    m = json.loads(models.read_text())
+    assert s["model"] == "custom-local:qwen3.8:27b"
+    entry = next(e for e in m["models"] if e["id"] == "qwen3.8:27b")
+    assert entry["url"] == "http://host:6333/v1/chat/completions"
+    assert entry["apiKey"] == "sk-old"
+    assert any(e["id"] == "gpt-5.6-terra" for e in m["models"])  # old kept
+
+    # 2. bare built-in current value still prefixes when catalog exists
+    settings.write_text(json.dumps({"model": "deepseek-v4-flash"}))
+    a.apply({"codebuddy.model": "glm-5.2"}, dry=False)
+    assert json.loads(settings.read_text())["model"] == "custom-local:glm-5.2"
+
+    # 3. explicit custom-local: ref used verbatim
+    a.apply({"codebuddy.model": "custom-local:gpt-5.6-terra"}, dry=False)
+    assert json.loads(settings.read_text())["model"] == "custom-local:gpt-5.6-terra"
+
+    # 4. never-customized install: bare name stays bare, no models.json made
+    settings.write_text(json.dumps({"model": "deepseek-v4-flash"}))
+    models.unlink()
+    a.apply({"codebuddy.model": "kimi-k4"}, dry=False)
+    assert json.loads(settings.read_text())["model"] == "kimi-k4"
+    assert not models.exists()
+
+    # dry run writes nothing
+    settings.write_text(json.dumps({"model": "custom-local:gpt-5.6-terra"}))
+    models.write_text(json.dumps({"models": [{"id": "gpt-5.6-terra"}]}))
+    assert a.apply({"codebuddy.model": "glm-5.2"}, dry=True)
+    assert json.loads(settings.read_text())["model"] == "custom-local:gpt-5.6-terra"
+
+
 if __name__ == "__main__":
     import pytest
     sys.exit(pytest.main([__file__, "-v"]))
