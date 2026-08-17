@@ -14,14 +14,14 @@ from ccse.registry import all_adapters
 
 def test_registry_loads_all_targets():
     from ccse import claude, cline, codex, gemini, opencode, qwen, prime  # noqa: F401
-    from ccse import openakita, jcode, dsh, openclaude, openhands  # noqa: F401
+    from ccse import openakita, jcode, dsh, openclaude, openhands, commandcode  # noqa: F401
     from ccse import extra  # noqa: F401
     ids = {a.id for a in all_adapters()}
     for expect in ("claude", "codex", "opencode", "gemini", "qwen", "cline",
                    "codebuddy", "pi", "openclaw", "kilocode", "reasonix",
                    "grok", "forge", "hermes", "snow", "crush", "droid",
                    "memmy", "prime", "omp", "kilo", "openakita", "jcode",
-                   "dsh", "openclaude", "openhands"):
+                   "dsh", "openclaude", "openhands", "commandcode"):
         assert expect in ids, f"missing adapter {expect}"
 
 
@@ -376,6 +376,33 @@ def test_openhands_roundtrip(tmp_path: Path, monkeypatch):
     assert after["security"] == {"confirmation_mode": False}  # spec preserved
     assert a.apply({"openhands.model": "glm-5.2"}, dry=False) == []  # idempotent
     oh_mod.OpenHandsAdapter.path = config.HOME / ".openhands" / "agent_settings.json"
+
+
+def test_commandcode_roundtrip(tmp_path: Path, monkeypatch):
+    """Command Code: model + featureModels writes preserve hooks; feature
+    slots flagged follows=True so `--model` covers them; idempotent."""
+    from ccse import commandcode as cc_mod
+    cfg = tmp_path / "settings.json"
+    cfg.write_text(json.dumps({
+        "model": "old-main",
+        "featureModels": {"compaction": "old-c", "vision": "old-v"},
+        "hooks": {"Stop": [{"hooks": [{"command": "x"}]}]},
+    }))
+    cc_mod.CommandCodeAdapter.path = cfg  # type: ignore[misc]
+    a = cc_mod.CommandCodeAdapter()
+    slots = {s.key: s for s in a.slots()}
+    assert slots["commandcode.model"].current == "old-main"
+    assert slots["commandcode.feature.compaction"].follows is True
+    diffs = a.apply({"commandcode.model": "glm-5.2",
+                     "commandcode.feature.compaction": "glm-5.2"}, dry=False)
+    assert len(diffs) == 2
+    after = json.loads(cfg.read_text())
+    assert after["model"] == "glm-5.2"
+    assert after["featureModels"]["compaction"] == "glm-5.2"
+    assert after["featureModels"]["vision"] == "old-v"     # untouched feature
+    assert "Stop" in after["hooks"]                         # preserved
+    assert a.apply({"commandcode.model": "glm-5.2"}, dry=False) == []  # idempotent
+    cc_mod.CommandCodeAdapter.path = config.HOME / ".commandcode" / "settings.json"
 
 
 def test_jsonpath_list_selector_roundtrip():
