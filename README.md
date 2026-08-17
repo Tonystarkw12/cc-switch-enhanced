@@ -126,7 +126,7 @@ ccse profiles                 # 列已有 profile
 | `grok` | `~/.grok/config.toml` | TOML | `[models].default`（同步 `[model."<def>"]` 表） | `[model."<def>"].base_url` | `env_key` → ~/.zshrc |
 | `forge` | `~/.forge/.forge.toml` | TOML | `[session].model_id`（自动 `merge_system_messages=true`） | — | — |
 | `crush` | `~/.config/crush/crush.json` + `~/.local/share/crush/providers.json` | JSON | 已配置 provider 的 `default_large_model_id` | `providers.<id>.base_url` | `providers.<id>.api_key` |
-| `droid` | `~/.factory/settings.json` | JSON | `sessionDefaultSettings.model`（**组合 id**，非裸模型名） | 活动 `customModels[].baseUrl` | 活动 `customModels[].apiKey` |
+| `droid` | `~/.factory/settings.json` | JSON | `sessionDefaultSettings.model`（裸名自动解析/新建 `customModels[]` 条目 → `custom:<name>-N` id） | 活动 `customModels[].baseUrl` | 活动 `customModels[].apiKey` |
 | `hermes` | `~/.hermes/config.yaml` | YAML | `model.default` | `model.base_url` | `model.api_key` |
 | `omp` | `~/.omp/agent/config.yml` | YAML | `llm.model` + `defaultModel` + `modelRoles.default`（保 `provider/` 前缀和 `:level`） | `llm.baseUrl` | `llm.apiKey` 的 `${ENV_VAR}` → ~/.zshrc / setx |
 | `memmy` | `~/.memmy/config.yaml` | YAML | `agents.defaults.model` | 活动 provider `apiBase` | `apiKey` 的 `${ENV_VAR}` → ~/.zshrc / setx |

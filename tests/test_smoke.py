@@ -1067,6 +1067,39 @@ def test_droid_adapter(tmp_path, monkeypatch):
     after = json.loads(cfg.read_text())
     assert after["customModels"][0]["baseUrl"] == "http://b"
     assert after["customModels"][0]["apiKey"] == "sk-2"
+
+    # bare --model + endpoints in one run -> new customModels entry + id ref
+    diffs = a.apply({"droid.model": "qwen3.8:27b",
+                     "droid.base_url": "http://host:6333/v1",
+                     "droid.api_key": "sk-9"}, dry=False)
+    after = json.loads(cfg.read_text())
+    sds = after["sessionDefaultSettings"]["model"]
+    assert sds == "custom:qwen3.8:27b-0"
+    entry = next(e for e in after["customModels"] if e["id"] == sds)
+    assert entry["model"] == "qwen3.8:27b"
+    assert entry["baseUrl"] == "http://host:6333/v1"
+    assert entry["apiKey"] == "sk-9"
+    assert any("customModels[custom:qwen3.8:27b-0]" in x for x in diffs)
+
+    # bare name already served by an entry -> reuse id, no new entry
+    n_before = len(after["customModels"])
+    diffs = a.apply({"droid.model": "m1"}, dry=False)
+    after = json.loads(cfg.read_text())
+    assert after["sessionDefaultSettings"]["model"] == "custom:m1-0"
+    assert len(after["customModels"]) == n_before
+
+    # heal: session model is a dangling bare name -> entry created on rerun
+    after["sessionDefaultSettings"]["model"] = "qwen3.8:27b"
+    del after["customModels"][-1]
+    cfg.write_text(json.dumps(after))
+    a.apply({"droid.model": "qwen3.8:27b"}, dry=False)
+    healed = json.loads(cfg.read_text())
+    assert healed["sessionDefaultSettings"]["model"] == "custom:qwen3.8:27b-0"
+
+    # no customModels catalog -> bare name written verbatim
+    cfg.write_text(json.dumps({"sessionDefaultSettings": {"model": "x"}}))
+    a.apply({"droid.model": "glm-5.2"}, dry=False)
+    assert json.loads(cfg.read_text())["sessionDefaultSettings"]["model"] == "glm-5.2"
     extra_mod.DroidAdapter.path = config.HOME / ".factory" / "settings.json"
 
 

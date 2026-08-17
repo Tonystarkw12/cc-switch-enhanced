@@ -829,8 +829,13 @@ class DroidAdapter:
     """Droid (Factory) ~/.factory/settings.json.
 
     sessionDefaultSettings.model = active model id (composite like
-    custom:glm-4.7-...-0). base_url/api_key live on the matching customModels[]
-    entry (the model id is not a bare model name — see show)."""
+    custom:glm-4.7-...-0) referencing a customModels[] entry whose `model`
+    field carries the real model name and baseUrl/apiKey the endpoint. A
+    bare `--model NAME` is resolved to the entry serving that model, or a
+    new entry is appended (copying endpoint settings from the active one;
+    same-run --base-url/--api-key override). Without a resolvable entry
+    droid silently falls back to the previous model. base_url/api_key slots
+    target the active customModel entry."""
     id = "droid"
     name = "Droid"
     primary = "droid.model"
@@ -847,11 +852,53 @@ class DroidAdapter:
                 return m, cm
         return m, None
 
+    def _ensure_custom(self, d, name, base_url=None, api_key=None):
+        """Resolve --model NAME to (entry, id, created, src_id); None when
+        no customModels catalog exists to build from."""
+        dicts = [e for e in (d.get("customModels") or [])
+                 if isinstance(e, dict) and e.get("id")]
+        if not dicts:
+            return None
+        if base_url:
+            dicts.sort(key=lambda e: e.get("baseUrl") != base_url)
+        if name.startswith("custom:"):
+            for e in dicts:
+                if e.get("id") == name:
+                    return e, name, False, None
+            src = dicts[0]
+            entry = dict(src)
+            bare = name[len("custom:"):]
+            entry.update({"id": name, "model": bare, "displayName": bare})
+        else:
+            for e in dicts:
+                if e.get("model") == name:
+                    return e, e["id"], False, None
+            src = self._active_custom(d)[1] or dicts[0]
+            entry = dict(src)
+            base = name.replace(" ", "-")
+            taken = {e["id"] for e in dicts}
+            eid, n = f"custom:{base}-0", 0
+            while eid in taken:
+                n += 1
+                eid = f"custom:{base}-{n}"
+            entry.update({"id": eid, "model": name, "displayName": name})
+        if base_url:
+            entry["baseUrl"] = base_url
+        if api_key:
+            entry["apiKey"] = api_key
+        return entry, entry["id"], True, src.get("id")
+
     def slots(self):
         if not self.available:
             return []
         d = config.load_json(self.path) or {}
         m, cm = self._active_custom(d)
+        if cm is None:
+            # dangling session model (bare name) — endpoint slots fall back
+            # to the first entry so --base-url/--api-key still apply
+            cands = [c for c in d.get("customModels") or []
+                     if isinstance(c, dict) and c.get("id")]
+            m, cm = (cands[0]["id"], cands[0]) if cands else (m, None)
         out = [Slot(key="droid.model", label="sessionDefaultSettings.model",
                     current=m)]
         if cm is not None:
@@ -870,11 +917,29 @@ class DroidAdapter:
         sds = d.setdefault("sessionDefaultSettings", {})
         diffs: list[str] = []
         if "model" in relevant:
-            old = sds.get("model")
-            if old != relevant["model"]:
-                diffs.append(f"  sessionDefaultSettings.model: {old!r} -> {relevant['model']!r}")
-                if not dry:
-                    sds["model"] = relevant["model"]
+            name = relevant["model"]
+            got = self._ensure_custom(d, name, relevant.get("base_url"),
+                                      relevant.get("api_key"))
+            if got is None:
+                old = sds.get("model")
+                if old != name:
+                    diffs.append(f"  sessionDefaultSettings.model: "
+                                 f"{old!r} -> {name!r}")
+                    if not dry:
+                        sds["model"] = name
+            else:
+                entry, eid, created, src_id = got
+                old = sds.get("model")
+                if old != eid:
+                    diffs.append(f"  sessionDefaultSettings.model: "
+                                 f"{old!r} -> {eid!r}")
+                    if not dry:
+                        sds["model"] = eid
+                if created:
+                    diffs.append(f"  customModels[{eid}]: (created)"
+                                 + (f" copied from {src_id!r}" if src_id else ""))
+                    if not dry:
+                        d.setdefault("customModels", []).append(entry)
         m, cm = self._active_custom(d)
         if cm is not None:
             for key, field in (("base_url", "baseUrl"), ("api_key", "apiKey")):
