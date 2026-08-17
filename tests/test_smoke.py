@@ -1234,6 +1234,47 @@ def test_opencode_catalog_sync(tmp_path: Path, monkeypatch):
     assert json.loads(cfg.read_text()) == {"model": "newapi/a"}
 
 
+def test_grok_adapter(tmp_path, monkeypatch):
+    """grok: models.default must resolve to a [model."<name>"] table —
+    without one grok silently falls back to the previous table."""
+    import tomllib
+    from ccse import extra as extra_mod
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        '[models]\ndefault = "deepseek-v4-flash"\n'
+        '\n[model.deepseek-v4-flash]\nmodel = "deepseek-v4-flash"\n'
+        'base_url = "http://host:6333/v1"\nname = "deepseek-v4-flash"\n'
+        'api_backend = "chat"\nenv_key = "NEWAPI_API_KEY"\n')
+    monkeypatch.setattr(extra_mod.GrokAdapter, "path", cfg, raising=False)
+    a = extra_mod.GrokAdapter()
+
+    diffs = a.apply({"grok.model": "qwen3.8:27b"}, dry=False)
+    d = tomllib.loads(cfg.read_text())
+    assert d["models"]["default"] == "qwen3.8:27b"
+    blk = d["model"]["qwen3.8:27b"]
+    assert blk["model"] == "qwen3.8:27b"
+    assert blk["base_url"] == "http://host:6333/v1"       # copied
+    assert blk["env_key"] == "NEWAPI_API_KEY"             # copied
+    assert "deepseek-v4-flash" in d["model"]              # old kept
+    assert any("model['qwen3.8:27b']" in x and "(created)" in x for x in diffs)
+
+    # rerun heal: default already set, table missing -> recreated
+    text = cfg.read_text()
+    start = text.index('[model."qwen3.8:27b"]')
+    end = text.index("[", start + 10) if "[model." in text[start + 10:] else len(text)
+    cfg.write_text(text[:start] + text[end:])
+    d = tomllib.loads(cfg.read_text())
+    assert "qwen3.8:27b" not in d["model"]
+    a.apply({"grok.model": "qwen3.8:27b"}, dry=False)
+    d = tomllib.loads(cfg.read_text())
+    assert d["model"]["qwen3.8:27b"]["base_url"] == "http://host:6333/v1"
+
+    # dry run writes nothing
+    before = cfg.read_text()
+    assert a.apply({"grok.model": "glm-5.2"}, dry=True)
+    assert cfg.read_text() == before
+
+
 if __name__ == "__main__":
     import pytest
     sys.exit(pytest.main([__file__, "-v"]))

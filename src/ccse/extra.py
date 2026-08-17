@@ -526,12 +526,39 @@ class GrokAdapter:
         diffs: list[str] = []
         if "model" in relevant and cur != relevant["model"]:
             diffs.append(f"  models.default: {cur!r} -> {relevant['model']!r}")
-            if not dry:
-                if "models" not in d:
-                    import tomlkit
-                    d["models"] = tomlkit.table()
-                d["models"]["default"] = relevant["model"]
-                cur = relevant["model"]
+            if "models" not in d:
+                import tomlkit
+                d["models"] = tomlkit.table()
+            d["models"]["default"] = relevant["model"]
+            cur = relevant["model"]
+        if "model" in relevant:
+            # grok resolves models.default -> [model."<name>"] table; without
+            # one it silently falls back to the previous table. Create it by
+            # copying the previous active model's endpoint settings (runs
+            # even when default already matches, to heal a missing table).
+            new = relevant["model"]
+            import tomlkit
+            mtab = d.get("model")
+            if not isinstance(mtab, dict):
+                mtab = tomlkit.table()
+                d["model"] = mtab
+            if new not in mtab:
+                src = mtab.get(cur) if cur and cur != new else None
+                if not isinstance(src, dict):
+                    src = next((t for t in mtab.values()
+                                if isinstance(t, dict) and t.get("base_url")), None)
+                blk = tomlkit.table()
+                if isinstance(src, dict):
+                    for f in ("base_url", "api_backend", "env_key"):
+                        if f in src:
+                            blk[f] = src[f]
+                blk["model"] = new
+                blk["name"] = new
+                diffs.append(f"  model[{new!r}]: (created)"
+                             + (f" copied from "
+                                f"{src.get('model')!r}" if isinstance(src, dict) else ""))
+                if not dry:
+                    mtab[new] = blk
         # ensure [model."<cur>"] table exists (model.apply ensures it too)
         if cur and "base_url" in relevant:
             mtab = d.get("model")
