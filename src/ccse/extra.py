@@ -186,6 +186,90 @@ class MmxAdapter:
             config.keep_mode_write_json(self.path, d)
         return diffs
 
+
+@register
+class AiderAdapter:
+    """Aider ~/.aider.conf.yml.
+
+    `model` must carry an `openai/` prefix to route through the OpenAI-
+    compatible client when `openai-api-base` points at a gateway — bare names
+    resolve via aider's vendor metadata and miss the custom base. A bare
+    --model NAME gets the prefix added (a NAME already containing `/` is used
+    verbatim). api-key is `provider=key` in the conf."""
+    id = "aider"
+    name = "Aider"
+    primary = "aider.model"
+    path = HOME / ".aider.conf.yml"
+
+    @property
+    def available(self):
+        return self.path.exists()
+
+    def _doc(self):
+        return _load_yaml(self.path)
+
+    @staticmethod
+    def _key(val):
+        """'openai=sk-x' -> 'sk-x'."""
+        if isinstance(val, str) and "=" in val:
+            return val.split("=", 1)[1]
+        return val
+
+    def slots(self):
+        if not self.available:
+            return []
+        doc, _y = self._doc()
+        if doc is None:
+            return []
+        return [
+            Slot(key="aider.model", label="model", current=doc.get("model")),
+            Slot(key="aider.base_url", label="openai-api-base",
+                 current=doc.get("openai-api-base"), kind=KIND_BASE_URL),
+            Slot(key="aider.api_key", label="api-key (openai=)",
+                 current=self._key(doc.get("api-key")), kind=KIND_API_KEY),
+        ]
+
+    def apply(self, assignments, dry=False):
+        relevant = {k[len("aider."):]: v for k, v in assignments.items()
+                    if k.startswith("aider.")}
+        if not relevant or not self.available:
+            return []
+        doc, y = self._doc()
+        if doc is None:
+            return ["  (skip: ruamel.yaml unavailable)"]
+        diffs: list[str] = []
+        if "model" in relevant:
+            target = relevant["model"]
+            if "/" not in target:
+                target = "openai/" + target
+            old = doc.get("model")
+            if old != target:
+                diffs.append(f"  model: {old!r} -> {target!r}")
+                if not dry:
+                    doc["model"] = target
+        if "base_url" in relevant:
+            base_url = config.ensure_openai_v1(relevant["base_url"])
+            old = doc.get("openai-api-base")
+            if old != base_url:
+                diffs.append(f"  openai-api-base: {old!r} -> {base_url!r}")
+                if not dry:
+                    doc["openai-api-base"] = base_url
+        if "api_key" in relevant:
+            old = self._key(doc.get("api-key"))
+            if old != relevant["api_key"]:
+                diffs.append(f"  api-key: {config.redact(old)!r} -> "
+                             f"{config.redact(relevant['api_key'])!r}")
+                if not dry:
+                    doc["api-key"] = f"openai={relevant['api_key']}"
+        if not diffs:
+            return []
+        if not dry:
+            from io import StringIO
+            buf = StringIO()
+            y.dump(doc, buf)
+            config.write_text_atomic(self.path, buf.getvalue())
+        return diffs
+
 # PI (lazyypi): ~/.pi/agent/settings.json + models.json. Pi resolves the
 # active model from defaultModel and requires that model in the active
 # provider's models.json catalog; keep both files synchronized.

@@ -21,7 +21,8 @@ def test_registry_loads_all_targets():
                    "codebuddy", "pi", "openclaw", "kilocode", "reasonix",
                    "grok", "forge", "hermes", "snow", "crush", "droid",
                    "memmy", "prime", "omp", "kilo", "openakita", "jcode",
-                   "dsh", "openclaude", "openhands", "commandcode", "mmx"):
+                   "dsh", "openclaude", "openhands", "commandcode", "mmx",
+                   "aider"):
         assert expect in ids, f"missing adapter {expect}"
 
 
@@ -1475,6 +1476,32 @@ def test_mmx_adapter(tmp_path: Path, monkeypatch):
     assert d["base_url"] == "http://host:6333"
     assert d["api_key"] == "sk-1"
     assert a.apply({"mmx.model": "qwen3.8:27b"}, dry=True) == []
+
+
+def test_aider_adapter(tmp_path: Path, monkeypatch):
+    """aider: bare model gets the openai/ prefix (custom openai-api-base
+    routing), base_url normalized to /v1, api-key stored as openai=<key>."""
+    from ccse import extra as extra_mod
+    cfg = tmp_path / ".aider.conf.yml"
+    cfg.write_text("git-commit-verify: true\n")
+    monkeypatch.setattr(extra_mod.AiderAdapter, "path", cfg, raising=False)
+    a = extra_mod.AiderAdapter()
+
+    a.apply({"aider.model": "qwen3.8:27b",
+             "aider.base_url": "http://host:6333",
+             "aider.api_key": "sk-1"}, dry=False)
+    import yaml as _yaml
+    d = _yaml.safe_load(cfg.read_text())
+    assert d["model"] == "openai/qwen3.8:27b"
+    assert d["openai-api-base"] == "http://host:6333/v1"
+    assert d["api-key"] == "openai=sk-1"
+    assert d["git-commit-verify"] is True  # existing keys preserved
+    # explicit provider-prefixed model used verbatim
+    a.apply({"aider.model": "gemini/gem-3-pro"}, dry=False)
+    assert _yaml.safe_load(cfg.read_text())["model"] == "gemini/gem-3-pro"
+    # api-key roundtrip slot strips the openai= prefix
+    assert a.slots()[2].current == "sk-1"
+    assert a.apply({"aider.model": "gemini/gem-3-pro"}, dry=True) == []
 
 
 if __name__ == "__main__":
