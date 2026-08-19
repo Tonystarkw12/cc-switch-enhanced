@@ -21,7 +21,7 @@ def test_registry_loads_all_targets():
                    "codebuddy", "pi", "openclaw", "kilocode", "reasonix",
                    "grok", "forge", "hermes", "snow", "crush", "droid",
                    "memmy", "prime", "omp", "kilo", "openakita", "jcode",
-                   "dsh", "openclaude", "openhands", "commandcode"):
+                   "dsh", "openclaude", "openhands", "commandcode", "mmx"):
         assert expect in ids, f"missing adapter {expect}"
 
 
@@ -1451,6 +1451,30 @@ def test_prime_api_key_literal(tmp_path: Path, monkeypatch):
     a.apply({"prime.api_key": "sk-direct"}, dry=False)
     assert json.loads(models.read_text())["providers"]["newapi"]["apiKey"] == \
         "sk-direct"
+
+
+def test_mmx_adapter(tmp_path: Path, monkeypatch):
+    """mmx: flat config.json; base_url gets a trailing /v1 stripped (chat
+    posts to base_url + /v1/messages, so base must be the gateway root)."""
+    from ccse import extra as extra_mod
+    cfg = tmp_path / "config.json"
+    cfg.write_text(json.dumps({"region": "global",
+                               "default_text_model": "MiniMax-M3"}))
+    monkeypatch.setattr(extra_mod.MmxAdapter, "path", cfg, raising=False)
+    a = extra_mod.MmxAdapter()
+
+    a.apply({"mmx.model": "qwen3.8:27b",
+             "mmx.base_url": "http://host:6333/v1"}, dry=False)
+    d = json.loads(cfg.read_text())
+    assert d["default_text_model"] == "qwen3.8:27b"
+    assert d["base_url"] == "http://host:6333"
+    # already-root base_url and api_key pass through untouched
+    a.apply({"mmx.base_url": "http://host:6333",
+             "mmx.api_key": "sk-1"}, dry=False)
+    d = json.loads(cfg.read_text())
+    assert d["base_url"] == "http://host:6333"
+    assert d["api_key"] == "sk-1"
+    assert a.apply({"mmx.model": "qwen3.8:27b"}, dry=True) == []
 
 
 if __name__ == "__main__":

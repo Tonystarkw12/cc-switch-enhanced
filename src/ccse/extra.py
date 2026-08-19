@@ -129,6 +129,63 @@ class CodeBuddyAdapter:
             config.keep_mode_write_json(self.path, s)
         return diffs
 
+# MMX (MiniMax CLI): ~/.mmx/config.json — flat keys, no catalog validation.
+@register
+class MmxAdapter:
+    """MMX ~/.mmx/config.json — flat JSON (default_text_model is the chat
+    model). Chat posts to base_url + /v1/messages (anthropic format, via the
+    local mmx patch dropping its hardcoded /anthropic prefix — newapi serves
+    /v1/messages natively). base_url must be the gateway ROOT; a trailing
+    /v1 would make mmx post to /v1/v1/messages, so it is stripped on write."""
+    id = "mmx"
+    name = "MMX"
+    primary = "mmx.model"
+    path = HOME / ".mmx" / "config.json"
+
+    @property
+    def available(self):
+        return self.path.exists()
+
+    def slots(self):
+        if not self.available:
+            return []
+        d = config.load_json(self.path) or {}
+        return [
+            Slot(key="mmx.model", label="default_text_model",
+                 current=d.get("default_text_model")),
+            Slot(key="mmx.base_url", label="base_url",
+                 current=d.get("base_url"), kind=KIND_BASE_URL),
+            Slot(key="mmx.api_key", label="api_key",
+                 current=d.get("api_key"), kind=KIND_API_KEY),
+        ]
+
+    def apply(self, assignments, dry=False):
+        relevant = {k[len("mmx."):]: v for k, v in assignments.items()
+                    if k.startswith("mmx.")}
+        if not relevant or not self.available:
+            return []
+        d = config.load_json(self.path) or {}
+        diffs = []
+        for label, field in (("model", "default_text_model"),
+                             ("base_url", "base_url"),
+                             ("api_key", "api_key")):
+            if label not in relevant:
+                continue
+            val = relevant[label]
+            if label == "base_url":
+                val = val.rstrip("/")
+                if val.endswith("/v1"):
+                    val = val[: -len("/v1")]
+            old = d.get(field)
+            if old != val:
+                diffs.append(f"  {field}: {old!r} -> "
+                             f"{config.redact(val) if label == 'api_key' else val!r}")
+                if not dry:
+                    d[field] = val
+        if diffs and not dry:
+            config.keep_mode_write_json(self.path, d)
+        return diffs
+
 # PI (lazyypi): ~/.pi/agent/settings.json + models.json. Pi resolves the
 # active model from defaultModel and requires that model in the active
 # provider's models.json catalog; keep both files synchronized.
