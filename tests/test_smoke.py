@@ -22,7 +22,7 @@ def test_registry_loads_all_targets():
                    "grok", "forge", "hermes", "snow", "crush", "droid",
                    "memmy", "prime", "omp", "kilo", "openakita", "jcode",
                    "dsh", "openclaude", "openhands", "commandcode", "mmx",
-                   "aider"):
+                   "aider", "pigo", "penguin"):
         assert expect in ids, f"missing adapter {expect}"
 
 
@@ -1502,6 +1502,67 @@ def test_aider_adapter(tmp_path: Path, monkeypatch):
     # api-key roundtrip slot strips the openai= prefix
     assert a.slots()[2].current == "sk-1"
     assert a.apply({"aider.model": "gemini/gem-3-pro"}, dry=True) == []
+
+
+def test_pigo_adapter(tmp_path: Path, monkeypatch):
+    """pigo: XDG config.toml, snake_case keys; base_url write ensures
+    protocol=openai (bare custom model ids can't infer it)."""
+    import tomllib
+    from ccse import extra as extra_mod
+    cfg = tmp_path / "config.toml"
+    cfg.write_text('model = "openrouter/free"\n')
+    monkeypatch.setattr(extra_mod.PigoAdapter, "path", cfg, raising=False)
+    a = extra_mod.PigoAdapter()
+
+    a.apply({"pigo.model": "qwen3.8:27b",
+             "pigo.base_url": "http://host:6333",
+             "pigo.api_key": "sk-1"}, dry=False)
+    d = tomllib.loads(cfg.read_text())
+    assert d["model"] == "qwen3.8:27b"
+    assert d["base_url"] == "http://host:6333/v1"
+    assert d["protocol"] == "openai"
+    assert d["api_key"] == "sk-1"
+    # existing protocol left alone on model-only switch
+    cfg.write_text('model = "a"\nprotocol = "openai"\nbase_url = "http://h/v1"\n')
+    assert a.apply({"pigo.model": "b"}, dry=True)
+    assert "protocol" not in " ".join(a.apply({"pigo.model": "b"}, dry=True))
+
+
+def test_penguin_adapter(tmp_path: Path, monkeypatch):
+    """penguin: default_model inline table must reference a [[models]] entry;
+    bare names reuse the serving entry or land in the newapi group."""
+    import tomllib
+    from ccse import extra as extra_mod
+    cfg = tmp_path / ".project_config.toml"
+    cfg.write_text(
+        'default_model = { provider = "deepseek", model_id = "deepseek-v4-flash" }\n'
+        '[[models]]\nprovider = "newapi"\nmodel_id = "qwen3.8:27b"\n'
+        'client_type = "openai"\ncontext_window = 1000000\nvision = false\n'
+        'base_url = "http://host:6333/v1"\napi_key = "sk-1"\n')
+    monkeypatch.setattr(extra_mod.PenguinAdapter, "path", cfg, raising=False)
+    a = extra_mod.PenguinAdapter()
+
+    # bare name matching an existing entry -> default_model repointed
+    diffs = a.apply({"penguin.model": "qwen3.8:27b"}, dry=False)
+    d = tomllib.loads(cfg.read_text())
+    assert d["default_model"]["provider"] == "newapi"
+    assert d["default_model"]["model_id"] == "qwen3.8:27b"
+    assert any("default_model" in x for x in diffs)
+
+    # unknown bare name lands in newapi group + entry created with copied url
+    a.apply({"penguin.model": "glm-5.2"}, dry=False)
+    d = tomllib.loads(cfg.read_text())
+    assert d["default_model"]["model_id"] == "glm-5.2"
+    entry = next(m for m in d["models"] if m["model_id"] == "glm-5.2")
+    assert entry["base_url"] == "http://host:6333/v1"
+    assert entry["api_key"] == "sk-1"
+
+    # endpoints update the active entry; base_url normalized
+    a.apply({"penguin.base_url": "http://host:6333"}, dry=False)
+    d = tomllib.loads(cfg.read_text())
+    entry = next(m for m in d["models"]
+                 if m["model_id"] == d["default_model"]["model_id"])
+    assert entry["base_url"] == "http://host:6333/v1"
 
 
 if __name__ == "__main__":

@@ -188,6 +188,206 @@ class MmxAdapter:
 
 
 @register
+class PigoAdapter:
+    """Pigo (Go pi-family) ~/.config/pigo/config.toml — XDG path, snake_case
+    keys (empirically: model/protocol/base_url/api_key; dash variants are
+    silently ignored by the TOML mapping). protocol must be "openai" for a
+    gateway base_url (bare custom model ids can't infer it), so setting
+    base_url ensures protocol when unset. api_key holds the literal."""
+    id = "pigo"
+    name = "Pigo"
+    primary = "pigo.model"
+    path = HOME / ".config" / "pigo" / "config.toml"
+
+    @property
+    def available(self):
+        return self.path.exists()
+
+    def _doc(self):
+        return tomlh.load_toml_editable(self.path)
+
+    def slots(self):
+        if not self.available:
+            return []
+        d = self._doc()
+        if d is None:
+            return []
+        return [
+            Slot(key="pigo.model", label="model", current=d.get("model")),
+            Slot(key="pigo.base_url", label="base_url",
+                 current=d.get("base_url"), kind=KIND_BASE_URL),
+            Slot(key="pigo.api_key", label="api_key",
+                 current=d.get("api_key"), kind=KIND_API_KEY),
+        ]
+
+    def apply(self, assignments, dry=False):
+        relevant = {k[len("pigo."):]: v for k, v in assignments.items()
+                    if k.startswith("pigo.")}
+        if not relevant or not self.available:
+            return []
+        d = self._doc()
+        if d is None:
+            return ["  (skip: tomlkit unavailable)"]
+        diffs: list[str] = []
+        if "model" in relevant and d.get("model") != relevant["model"]:
+            diffs.append(f"  model: {d.get('model')!r} -> {relevant['model']!r}")
+            if not dry:
+                d["model"] = relevant["model"]
+        if "base_url" in relevant:
+            base_url = config.ensure_openai_v1(relevant["base_url"])
+            if d.get("base_url") != base_url:
+                diffs.append(f"  base_url: {d.get('base_url')!r} -> {base_url!r}")
+                if not dry:
+                    d["base_url"] = base_url
+            if d.get("protocol") != "openai":
+                diffs.append(f"  protocol: {d.get('protocol')!r} -> 'openai' "
+                             "(required for gateway base_url)")
+                if not dry:
+                    d["protocol"] = "openai"
+        if "api_key" in relevant and d.get("api_key") != relevant["api_key"]:
+            diffs.append(f"  api_key: {config.redact(d.get('api_key'))!r} -> "
+                         f"{config.redact(relevant['api_key'])!r}")
+            if not dry:
+                d["api_key"] = relevant["api_key"]
+        if diffs and not dry:
+            config.write_text_atomic(self.path, tomlh.dump_toml(d))
+        return diffs
+
+
+@register
+class PenguinAdapter:
+    """Penguin ~/.penguin/data/default_project/.project_config.toml.
+
+    default_model = {provider, model_id} inline table referencing a [[models]]
+    entry (client_type/base_url/api_key live there; penguin can't resolve a
+    default without the entry). Bare --model NAME reuses the entry serving
+    that model_id, else lands in the "newapi" group when one exists (the
+    gateway convention), else the current provider; missing entries are
+    created with endpoint fields copied from a same-provider entry."""
+    id = "penguin"
+    name = "Penguin"
+    primary = "penguin.model"
+    path = HOME / ".penguin" / "data" / "default_project" / ".project_config.toml"
+
+    @property
+    def available(self):
+        return self.path.exists()
+
+    def _doc(self):
+        return tomlh.load_toml_editable(self.path)
+
+    @staticmethod
+    def _models(d):
+        return [m for m in (d.get("models") or []) if isinstance(m, dict)]
+
+    def _entry(self, d, provider, model_id):
+        for m in self._models(d):
+            if m.get("provider") == provider and m.get("model_id") == model_id:
+                return m
+        return None
+
+    def slots(self):
+        if not self.available:
+            return []
+        d = self._doc()
+        if d is None:
+            return []
+        dm = d.get("default_model") or {}
+        prov, mid = dm.get("provider"), dm.get("model_id")
+        cur = f"{prov}/{mid}" if prov and mid else None
+        out = [Slot(key="penguin.model", label="default_model", current=cur)]
+        entry = self._entry(d, prov, mid) if prov else None
+        if entry is not None:
+            out.append(Slot(key="penguin.base_url",
+                            label=f"models[{prov}/{mid}].base_url",
+                            current=entry.get("base_url"), kind=KIND_BASE_URL))
+            out.append(Slot(key="penguin.api_key",
+                            label=f"models[{prov}/{mid}].api_key",
+                            current=entry.get("api_key"), kind=KIND_API_KEY))
+        return out
+
+    def apply(self, assignments, dry=False):
+        relevant = {k[len("penguin."):]: v for k, v in assignments.items()
+                    if k.startswith("penguin.")}
+        if not relevant or not self.available:
+            return []
+        d = self._doc()
+        if d is None:
+            return ["  (skip: tomlkit unavailable)"]
+        import tomlkit
+        dm = d.get("default_model")
+        if not isinstance(dm, dict):
+            dm = tomlkit.inline_table()
+            d["default_model"] = dm
+        diffs: list[str] = []
+        if "model" in relevant:
+            name = relevant["model"]
+            models = self._models(d)
+            if "/" in name:
+                prov, mid = name.split("/", 1)
+            else:
+                hit = next((m for m in models if m.get("model_id") == name), None)
+                if hit is not None:
+                    prov, mid = hit.get("provider"), name
+                elif any(m.get("provider") == "newapi" for m in models):
+                    prov, mid = "newapi", name
+                else:
+                    prov, mid = dm.get("provider") or "newapi", name
+            old = (f"{dm.get('provider')}/{dm.get('model_id')}"
+                   if dm.get("provider") else None)
+            new = f"{prov}/{mid}"
+            if old != new:
+                diffs.append(f"  default_model: {old!r} -> {new!r}")
+                if not dry:
+                    # replace the whole inline table — mutating keys in a
+                    # parsed inline table corrupts tomlkit's newline layout
+                    nd = tomlkit.inline_table()
+                    nd["provider"], nd["model_id"] = prov, mid
+                    d["default_model"] = nd
+            entry = self._entry(d, prov, mid)
+            if entry is None:
+                entry = tomlkit.table()
+                entry["provider"] = prov
+                entry["model_id"] = mid
+                entry["client_type"] = "openai"
+                entry["context_window"] = 1000000
+                entry["vision"] = False
+                src = next((m for m in models if m.get("provider") == prov
+                            and m.get("base_url")), None)
+                entry["base_url"] = relevant.get("base_url") or \
+                    (src.get("base_url") if src else None) or ""
+                entry["api_key"] = relevant.get("api_key") or \
+                    (src.get("api_key") if src else None) or ""
+                diffs.append(f"  models[{new}]: (created)"
+                             + (f" copied from {prov}/{src.get('model_id')}"
+                                if src else ""))
+                if not dry:
+                    d.setdefault("models", []).append(entry)
+        dm2 = d.get("default_model") or {}
+        entry = self._entry(d, dm2.get("provider"), dm2.get("model_id")) \
+            if dm2.get("provider") else None
+        if entry is not None:
+            if "base_url" in relevant:
+                base_url = config.ensure_openai_v1(relevant["base_url"])
+                if entry.get("base_url") != base_url:
+                    diffs.append(f"  models[{dm2.get('provider')}/"
+                                 f"{dm2.get('model_id')}].base_url: "
+                                 f"{entry.get('base_url')!r} -> {base_url!r}")
+                    if not dry:
+                        entry["base_url"] = base_url
+            if "api_key" in relevant and entry.get("api_key") != relevant["api_key"]:
+                diffs.append(f"  models[{dm2.get('provider')}/"
+                             f"{dm2.get('model_id')}].api_key: "
+                             f"{config.redact(entry.get('api_key'))!r} -> "
+                             f"{config.redact(relevant['api_key'])!r}")
+                if not dry:
+                    entry["api_key"] = relevant["api_key"]
+        if diffs and not dry:
+            config.write_text_atomic(self.path, tomlh.dump_toml(d))
+        return diffs
+
+
+@register
 class AiderAdapter:
     """Aider ~/.aider.conf.yml.
 
