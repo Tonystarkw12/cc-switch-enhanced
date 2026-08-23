@@ -248,3 +248,11 @@ if __name__ == "__main__":
         "export QUOTED=\"q-5.6\"\n", "utf-8")
     print(_read_vars(tf, {"KIMI_MODEL_NAME", "QUOTED"}))
     os.unlink(tf)
+# fx (native coding agent): model via FX_MODEL env; the default otherwise
+# comes from cloud team prefs / last-session preferences (settings.json has no
+# model key). Gateway override vars (FX_GATEWAY_BASE_URL) exist but are for
+# fx's own proxy — cloud-auth here, so model-only.
+make_envrc_adapter(
+    "fx", "fx",
+    {"model": "FX_MODEL"},
+)
