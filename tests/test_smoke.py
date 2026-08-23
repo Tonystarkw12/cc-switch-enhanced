@@ -1622,3 +1622,36 @@ def test_mcode_roundtrip(tmp_path: Path, monkeypatch):
     a.apply({"mcode.model": "minimax/MiniMax-M3"}, dry=False)
     assert _y.YAML().load(cfg.read_text("utf-8"))["defaultModel"] == "minimax/MiniMax-M3"
     mc_mod.McodeAdapter.path = config.HOME / ".minimax" / "config.yaml"
+
+
+def test_mimo_roundtrip(tmp_path: Path, monkeypatch):
+    """Mimo: JSONC surgery preserves comments; model keeps provider prefix;
+    catalog entry added for custom providers; baseURL/apiKey swappable."""
+    from ccse import mimo as mi_mod
+    cfg = tmp_path / "mimocode.jsonc"
+    cfg.write_text(
+        '{\n  // 默认模型\n  "model": "custom/old-model",\n'
+        '  "provider": {\n    "custom": {\n      "name": "X",\n'
+        '      "only_configured_models": true,\n'
+        '      "models": { "old-model": {"name": "old-model"} },\n'
+        '      "options": { "baseURL": "https://old", "apiKey": "sk-old" }\n'
+        '    }\n  }\n}\n')
+    mi_mod.MimoAdapter.path = cfg  # type: ignore[misc]
+    a = mi_mod.MimoAdapter()
+    slots = {s.key: s.current for s in a.slots()}
+    assert slots["mimo.model"] == "custom/old-model"
+    assert slots["mimo.base_url"] == "https://old"
+    diffs = a.apply({"mimo.model": "new-model"}, dry=False)
+    assert any("-> 'custom/new-model'" in d for d in diffs)
+    assert any("models: + 'new-model'" in d for d in diffs)
+    txt = cfg.read_text("utf-8")
+    assert "// 默认模型" in txt  # comments survived
+    d = mi_mod._parse(txt)
+    assert d["model"] == "custom/new-model"
+    assert "new-model" in d["provider"]["custom"]["models"]
+    assert d["provider"]["custom"]["models"]["old-model"]  # kept
+    a.apply({"mimo.base_url": "http://10.0.0.5", "mimo.api_key": "sk-new"}, dry=False)
+    d = mi_mod._parse(cfg.read_text("utf-8"))
+    assert d["provider"]["custom"]["options"]["baseURL"] == "http://10.0.0.5"
+    assert d["provider"]["custom"]["options"]["apiKey"] == "sk-new"
+    mi_mod.MimoAdapter.path = config.HOME / ".config" / "mimocode" / "mimocode.jsonc"
