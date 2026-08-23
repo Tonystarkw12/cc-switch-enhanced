@@ -1,16 +1,22 @@
 <div align="center">
 
-# `ccse` · cc-switch-enhanced
+<img src="docs/imgs/ccse-hero.png" alt="ccse — one-line model switch across coding agents" width="720"/>
 
-**一行命令，给 26 个 AI 编程助手同时换模型 / 中转地址 / key**
+# cc-switch-enhanced
 
-专为「已用聚合 API（NewAPI / omniroute / 百炼 Coding Plan / 各种镜像站），换了订阅导致模型名、端点或 key 变了，要逐个 agent 改回来」的场景。`cc-switch` GUI 适配面太窄，本工具把适配铺开，并补上 subagent 跟随、端点探测、行为注入。
+**The fleet-wide model switcher for AI coding agents.**
+一行命令，为 37 个 AI 编程助手同时切换模型 / 中转地址 / API key —— 含 subagent、端点探测与一键回滚。
 
 [![license](https://img.shields.io/badge/license-MIT-blue)](#)
 [![python](https://img.shields.io/badge/python-%E2%89%A53.11-green)](#)
 [![platform](https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20win-lightgrey)](#)
 [![deps](https://img.shields.io/badge/deps-stdlib%20first%20%2B%202-success)](#)
-[![agents](https://img.shields.io/badge/adapters-26-orange)](#)
+[![agents](https://img.shields.io/badge/adapters-37-orange)](#)
+[![docs](https://img.shields.io/badge/docs-DeepWiki-8b5cf6)](https://app.devin.ai/org/xing-ling-ji-zhu/wiki/Tonystarkw12/cc-switch-enhanced?branch=master)
+
+**Why** — 换一个聚合 API（NewAPI / omniroute / 百炼 / 镜像站），模型名、端点、key 全变。GUI 工具适配面窄，手动逐个改配置既慢又易错。`ccse` 把整条切换链路自动化：**改 → 校验 → 可回滚**。
+
+**[快速开始](#tldr)** · **[DeepWiki 文档](https://app.devin.ai/org/xing-ling-ji-zhu/wiki/Tonystarkw12/cc-switch-enhanced?branch=master)** · **[适配列表](#adapter-覆盖37-个)**
 
 </div>
 
@@ -24,10 +30,11 @@
 ## 目录
 
 - [TL;DR](#tldr)
+- [文档（DeepWiki）](https://app.devin.ai/org/xing-ling-ji-zhu/wiki/Tonystarkw12/cc-switch-enhanced?branch=master)
 - [安装](#安装)
 - [`ccse rules` —— 行为注入（caveman + rtk）](#ccse-rules--行为注入caveman--rtk)
 - [profile —— 多槽位配方](#profile--多槽位配方)
-- [adapter 覆盖（26 个）](#adapter-覆盖26-个)
+- [adapter 覆盖（37 个）](#adapter-覆盖37-个)
 - [verify —— 换完确认没改坏](#verify--换完确认没改坏)
 - [rewrite —— 项目内一键切 LLM 配置](#rewrite--项目内一键切-llm-配置)
 - [撤回机制](#撤回机制)
@@ -107,7 +114,7 @@ ccse profiles                 # 列已有 profile
 - `agent.slot = "name"`：`agent` 选 adapter，`slot` 选该 adapter 内字段。
 - profile 里省略的槽位**不动** → 可只切部分 agent。
 
-## adapter 覆盖（26 个）
+## adapter 覆盖（37 个）
 
 **结构化配置**（`--model` 改主槽位 + subagent；`--base-url`/`--api-key` 改对应字段）：
 
@@ -147,6 +154,8 @@ ccse profiles                 # 列已有 profile
 | `pigo` | `~/.config/pigo/config.toml` | TOML | `model` | `base_url`（同时保证 `protocol = "openai"`） | `api_key` |
 | `penguin` | `~/.penguin/data/default_project/.project_config.toml` | TOML | `default_model.model_id`（+`[[models]]` 注册表条目同步） | `models[...].base_url` | `models[...].api_key` |
 | `aider` | `~/.aider.conf.yml` | YAML | `model`（裸名自动补 `openai/` 前缀走网关） | `openai-api-base` | `api-key`（`provider=key`） |
+| `mcode` | `~/.minimax/config.yaml` | YAML | `defaultModel`（catalog 解析源；BYO 自动 `custom_provider:` 前缀 + 补条目） | 活动 provider `options.baseURL` | 活动 provider `options.apiKey` |
+| `mimo` | `~/.config/mimocode/mimocode.jsonc` | JSONC | `model`（注释保留的外科手术编辑） | `provider.<active>.options.baseURL` | `provider.<active>.options.apiKey` |
 
 **env / shell-rc**（模型名在 `~/.zshrc` 的 `export` 行）：
 
@@ -155,6 +164,7 @@ ccse profiles                 # 列已有 profile
 | `kimi` | `KIMI_MODEL_NAME` / `KIMI_MODEL_API_KEY` | Kimi Code 模型名走 env provider `__kimi_env__` |
 | `copaw` | `COPAW_MODEL_NAME` / `COPAW_MODEL_API_KEY` | CoPAW 走 NewAPI fallback 的稳定引用 |
 | `nvim` | `NEWAPI_MODEL` / `NEWAPI_BASE_URL` / `NEWAPI_API_KEY` | Neovim minuet.nvim 经 env 读配置 |
+| `fx` | `FX_MODEL` | fx 原生二进制；默认模型在云端 team prefs，env 覆盖 |
 | `nvim` | `NEWAPI_MODEL` / `NEWAPI_BASE_URL` / `NEWAPI_API_KEY` | minuet.nvim 读 env 变量（见 minuet.lua）；base_url 带/不带 `/v1` 均可（minuet 自行 strip 再拼） |
 
 envrc 适配器只改它声明的那一行 `export VAR=...`（单引号转义，`glm-5.2[1M]` 这类含特殊字符的名字也安全），rc 文件里其它内容一字不动；snapshot/undo 同样覆盖 `~/.zshrc`。
@@ -253,6 +263,8 @@ pipx/uv 装一个 CLI，stdlib（`argparse`/`tomllib`/`json`/`urllib`）为主�
 
 <div align="center">
 
-**[GitHub](https://github.com/Tonystarkw12/cc-switch-enhanced)** · 觉得有用给个 ⭐ · issue / PR 欢迎
+**[快速开始](#tldr)** · **[DeepWiki 文档](https://app.devin.ai/org/xing-ling-ji-zhu/wiki/Tonystarkw12/cc-switch-enhanced?branch=master)** · **[适配列表](#adapter-覆盖37-个)** · **[Releases](https://github.com/Tonystarkw12/cc-switch-enhanced/releases)**
+
+MIT © Tonystarkw12 · 觉得有用给个 ⭐ · [issue](https://github.com/Tonystarkw12/cc-switch-enhanced/issues) / [PR](https://github.com/Tonystarkw12/cc-switch-enhanced/pulls) 欢迎
 
 </div>
