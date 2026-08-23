@@ -27,7 +27,7 @@ _ENV_KEY_ADAPTERS = ("codex", "grok", "reasonix", "memmy", "omp", "prime")
 
 def _load_adapters():
     # import side-effect registers adapters
-    from . import claude, cline, codex, gemini, opencode, qwen, prime, openakita, jcode, dsh, openclaude, openhands, commandcode  # noqa: F401
+    from . import claude, cline, codex, gemini, opencode, qwen, prime, openakita, jcode, dsh, openclaude, openhands, commandcode, mcode  # noqa: F401
     from . import extra, envrc  # noqa: F401
     return all_adapters()
 
@@ -233,6 +233,12 @@ def _model_assignments(name: str, only, exclude, keep_prefix: bool = True) -> di
             if key not in slots:
                 continue
             cur = slots[key].current
+            if getattr(a, "model_raw", False):
+                # adapter resolves bare names itself (e.g. mcode picks the
+                # provider source from its catalogs; a blanket keep-prefix
+                # would pin the wrong source)
+                out[key] = name
+                continue
             out[key] = _model_target(
                 name, cur, keep_prefix, getattr(a, "suffix", "") or "")
     return out

@@ -14,7 +14,7 @@ from ccse.registry import all_adapters
 
 def test_registry_loads_all_targets():
     from ccse import claude, cline, codex, gemini, opencode, qwen, prime  # noqa: F401
-    from ccse import openakita, jcode, dsh, openclaude, openhands, commandcode  # noqa: F401
+    from ccse import openakita, jcode, dsh, openclaude, openhands, commandcode, mcode  # noqa: F401
     from ccse import extra  # noqa: F401
     ids = {a.id for a in all_adapters()}
     for expect in ("claude", "codex", "opencode", "gemini", "qwen", "cline",
@@ -1490,15 +1490,15 @@ def test_aider_adapter(tmp_path: Path, monkeypatch):
     a.apply({"aider.model": "qwen3.8:27b",
              "aider.base_url": "http://host:6333",
              "aider.api_key": "sk-1"}, dry=False)
-    import yaml as _yaml
-    d = _yaml.safe_load(cfg.read_text())
+    from ruamel.yaml import YAML as _RY
+    d = _RY(typ="safe").load(cfg.read_text())
     assert d["model"] == "openai/qwen3.8:27b"
     assert d["openai-api-base"] == "http://host:6333/v1"
     assert d["api-key"] == "openai=sk-1"
     assert d["git-commit-verify"] is True  # existing keys preserved
     # explicit provider-prefixed model used verbatim
     a.apply({"aider.model": "gemini/gem-3-pro"}, dry=False)
-    assert _yaml.safe_load(cfg.read_text())["model"] == "gemini/gem-3-pro"
+    assert _RY(typ="safe").load(cfg.read_text())["model"] == "gemini/gem-3-pro"
     # api-key roundtrip slot strips the openai= prefix
     assert a.slots()[2].current == "sk-1"
     assert a.apply({"aider.model": "gemini/gem-3-pro"}, dry=True) == []
@@ -1588,3 +1588,37 @@ def test_bom_toml_and_broken_config_skip(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(cli_mod, "_filter_adapters", lambda ads, o, e: ads)
     assert cli_mod._model_assignments("glm-5.2", None, None) == {}  # skipped, no raise
     GrokAdapter.path = config.HOME / ".grok" / "config.toml"
+
+
+def test_mcode_roundtrip(tmp_path: Path, monkeypatch):
+    """MCode: defaultModel keeps source prefix on bare name; custom-source
+    model gets a catalog entry created; endpoint opts preserved+switchable."""
+    import ruamel.yaml as _y
+    from ccse import mcode as mc_mod
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "provider:\n  minimax:\n    options:\n      baseURL: https://old\n"
+        "defaultModel: custom_provider:newapi/old-model\n"
+        "custom_provider:\n  newapi:\n    options:\n      apiKey: sk-old\n"
+        "      baseURL: http://192.168.0.14:6333\n    models:\n"
+        "      old-model: {reasoning: true}\n")
+    mc_mod.McodeAdapter.path = cfg  # type: ignore[misc]
+    a = mc_mod.McodeAdapter()
+    slots = {s.key: s.current for s in a.slots()}
+    assert slots["mcode.model"] == "custom_provider:newapi/old-model"
+    assert slots["mcode.base_url"] == "http://192.168.0.14:6333"
+    diffs = a.apply({"mcode.model": "deepseek-v4-flash"}, dry=False)
+    assert any("-> 'custom_provider:newapi/deepseek-v4-flash'" in d for d in diffs)
+    assert any("models: + 'deepseek-v4-flash'" in d for d in diffs)  # catalog entry
+    doc = _y.YAML().load(cfg.read_text("utf-8"))
+    assert doc["defaultModel"] == "custom_provider:newapi/deepseek-v4-flash"
+    assert "deepseek-v4-flash" in doc["custom_provider"]["newapi"]["models"]
+    assert doc["custom_provider"]["newapi"]["models"]["old-model"]  # kept
+    a.apply({"mcode.base_url": "http://10.0.0.5", "mcode.api_key": "sk-new"}, dry=False)
+    doc = _y.YAML().load(cfg.read_text("utf-8"))
+    assert doc["custom_provider"]["newapi"]["options"]["baseURL"] == "http://10.0.0.5"
+    assert doc["custom_provider"]["newapi"]["options"]["apiKey"] == "sk-new"
+    # verbatim source switch via '/'
+    a.apply({"mcode.model": "minimax/MiniMax-M3"}, dry=False)
+    assert _y.YAML().load(cfg.read_text("utf-8"))["defaultModel"] == "minimax/MiniMax-M3"
+    mc_mod.McodeAdapter.path = config.HOME / ".minimax" / "config.yaml"
