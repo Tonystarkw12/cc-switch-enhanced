@@ -17,4 +17,8 @@ build/
 .repowise/
 .spec-workflow/
 .vscode/
+.serena/
+.deepeval/
+.ruff_cache/
+logs/
 AGENTS.md

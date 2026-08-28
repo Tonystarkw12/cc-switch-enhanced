@@ -50,6 +50,7 @@ Compress aggressively but PRESERVE technical substance: code, URLs, file paths, 
 # by exception). kimi / copaw are env-only and intentionally absent.
 INSTRUCTION_FILES: dict[str, Path] = {
     "claude":     HOME / ".claude" / "CLAUDE.md",
+    "zcode":      HOME / ".zcode" / "AGENTS.md",
     "codex":      HOME / ".codex" / "AGENTS.md",
     "opencode":   HOME / ".config" / "opencode" / "AGENTS.md",
     "grok":       HOME / ".grok" / "AGENTS.md",
