@@ -28,11 +28,14 @@ _SKIP_DIRS = {
 }
 _SOURCE_EXTS = {".py", ".ts", ".js", ".mts", ".cts", ".mjs", ".cjs"}
 
-# env-var / .env key-name -> which LLM slot it holds
+# env-var / .env key-name -> which LLM slot it holds. The (?<![A-Za-z0-9])
+# lookbehind keeps substring collisions from matching — DATABASE_URL contains
+# BASE_URL, LOGIN_TOKEN contains TOKEN; only a non-alphanumeric boundary before
+# the token counts (LLM_BASE_URL, OPENAI_API_KEY still match).
 _KIND_KEYS: dict[str, re.Pattern] = {
-    "base_url": re.compile(r"BASE[_]?URL|BASEURL|ENDPOINT", re.I),
-    "api_key": re.compile(r"API[_]?KEY|APIKEY|API[_]?TOKEN|AUTH[_]?TOKEN", re.I),
-    "model": re.compile(r"MODEL", re.I),
+    "base_url": re.compile(r"(?<![A-Za-z0-9])BASE[_]?URL|(?<![A-Za-z0-9])BASEURL|(?<![A-Za-z0-9])ENDPOINT", re.I),
+    "api_key": re.compile(r"(?<![A-Za-z0-9])API[_]?KEY|(?<![A-Za-z0-9])APIKEY|(?<![A-Za-z0-9])API[_]?TOKEN|(?<![A-Za-z0-9])AUTH[_]?TOKEN", re.I),
+    "model": re.compile(r"(?<![A-Za-z0-9])MODEL", re.I),
 }
 
 # env-var read with an inline literal default → rewrite the default when the

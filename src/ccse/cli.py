@@ -27,7 +27,7 @@ _ENV_KEY_ADAPTERS = ("codex", "grok", "reasonix", "memmy", "omp", "prime")
 
 def _load_adapters():
     # import side-effect registers adapters
-    from . import claude, cline, codex, gemini, opencode, qwen, prime, openakita, jcode, dsh, openclaude, openhands, commandcode, mcode, mimo  # noqa: F401
+    from . import claude, cline, codex, gemini, opencode, qwen, prime, openakita, jcode, dsh, openclaude, openhands, commandcode, mcode, mimo, zcode  # noqa: F401
     from . import extra, envrc  # noqa: F401
     return all_adapters()
 
@@ -578,6 +578,24 @@ def build_parser() -> argparse.ArgumentParser:
     sru.add_argument("--dry", action="store_true", help="preview only, write nothing")
     sru.set_defaults(func=cmd_rules)
 
+    pe = sub.add_parser(
+        "penv", help="named providers + one-shot project .env switch "
+                     "(store: ~/.ccse/providers.toml)")
+    pe.add_argument("dir", nargs="?",
+                    help="project dir (or provider NAME for --rm / upsert)")
+    pe.add_argument("name", nargs="?", help="provider name to apply")
+    pe.add_argument("--base-url", metavar="URL", help="upsert provider base_url")
+    pe.add_argument("--api-key", metavar="KEY", help="upsert provider api_key")
+    pe.add_argument("--model", metavar="NAME",
+                    help="model to write (upsert: provider default model)")
+    pe.add_argument("--prefix", default="OPENAI_",
+                    help="prefix for appended canonical keys (default OPENAI_)")
+    pe.add_argument("--file", default=".env",
+                    help="env file basename in the project (default .env)")
+    pe.add_argument("--rm", action="store_true", help="remove provider NAME")
+    pe.add_argument("--dry", action="store_true", help="preview only, write nothing")
+    pe.set_defaults(func=cmd_penv)
+
     return p
 
 
@@ -593,6 +611,27 @@ def cmd_rewrite(args) -> int:
     if not assignments:
         config.die("rewrite needs at least one of --base-url/--api-key/--model")
     return rewrite.run(Path(args.dir), assignments, dry=args.dry)
+
+
+def cmd_penv(args) -> int:
+    from . import penv
+    a = args
+    if a.rm:
+        if not a.dir or a.name:
+            config.die("usage: ccse penv NAME --rm")
+        return penv.remove(a.dir)
+    if a.base_url or a.api_key:
+        if a.name:
+            config.die("upsert takes a single NAME positional: "
+                       "ccse penv NAME --base-url U --api-key K")
+        penv.add(a.dir, base_url=a.base_url, api_key=a.api_key, model=a.model)
+        return 0
+    if a.dir and a.name:
+        return penv.use(Path(a.dir), a.name, model=a.model, prefix=a.prefix,
+                        env_name=a.file, dry=a.dry)
+    if a.dir:
+        return penv.status(Path(a.dir), env_name=a.file)
+    return penv.show_providers()
 
 
 def cmd_rules(args) -> int:

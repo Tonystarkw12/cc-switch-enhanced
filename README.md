@@ -37,6 +37,7 @@
 - [adapter 覆盖（37 个）](#adapter-覆盖37-个)
 - [verify —— 换完确认没改坏](#verify--换完确认没改坏)
 - [rewrite —— 项目内一键切 LLM 配置](#rewrite--项目内一键切-llm-配置)
+- [penv —— 项目 .env 一键换提供商](#penv--项目-env-一键换提供商)
 - [撤回机制](#撤回机制)
 - [自定义 agent](#自定义-agent)
 - [安全](#安全)
@@ -56,6 +57,7 @@ ccse show                               # 看每个 agent 当前值（★=主槽
 ccse verify                             # 换完验证：探测每个端点+模型
 ccse undo                               # 撤回最近一次 apply
 ccse rules --apply                      # 给全部 agent 注入 caveman+rtk 行为
+ccse penv ./myproj newapi               # 项目 .env 一键换 provider（库: ~/.ccse/providers.toml）
 ccse list                               # 列全部 adapter（含未安装）
 ```
 
@@ -202,6 +204,21 @@ ccse rewrite ./worker --model glm-5.2 --dry      # 先预览
 
 替换规则（保守，只碰 LLM 特征行）：`.env*` 里键名含 `BASE_URL`/`API_KEY`/`MODEL` 的行换值；脚本里 `os.getenv("OPENAI_MODEL", "gpt-4o")` / `process.env.OPENAI_MODEL ?? "gpt-4o"` 这类**带默认值的 env 读取**替换默认值，行首 `api_key = "sk-..."` 字面量也替换；`os.environ["KEY"]`（无默认值）不动。自动跳过 `.git`/`node_modules`/`.venv`/`dist`/`build`；`model = keras.Model()` 这类非 LLM 代码不碰。`--dry` 预览；无快照（靠 git 管）。
 
+## penv —— 项目 .env 一键换提供商
+
+`rewrite` 每次要手动传 URL/key；`penv` 补上另一半：常用聚合端存成命名 provider（`~/.ccse/providers.toml`），之后一条命令把整个项目的 `.env` 切过去。
+
+```bash
+ccse penv newapi --base-url http://10.0.0.5:3000/v1 --api-key sk-xxx   # 存 provider
+ccse penv                                          # 列 provider（key 脱敏）
+ccse penv ./myproj newapi                          # 一键切项目 .env
+ccse penv ./myproj newapi --model glm-5.2 --dry    # 预览；--model 临时覆盖
+ccse penv ./myproj                                 # 看项目 .env 当前 LLM 配置
+ccse penv newapi --rm                              # 删 provider
+```
+
+切换逻辑：`<项目>/.env*` 里键名含 `BASE_URL`/`API_KEY`/`MODEL` 的行原地换值（与 `rewrite` 同一套保守启发式，带非字母数字边界判定，`DATABASE_URL` 这类不会误伤）；项目缺的键补上 `<PREFIX>BASE_URL` / `<PREFIX>API_KEY` / `<PREFIX>MODEL`（`--prefix` 定前缀，默认 `OPENAI_`；`--file` 定文件名，默认 `.env`）。写前自动快照（`ccse undo` 可撤），history 里 api_key 脱敏。
+
 ## 撤回机制
 
 每次 `apply` / `--model`（非 dry）**写前自动快照**到 `~/.ccse/snapshots/<时间戳>/`：
@@ -253,6 +270,7 @@ pipx/uv 装一个 CLI，stdlib（`argparse`/`tomllib`/`json`/`urllib`）为主�
 - [x] `undo` / `history` / `snapshots` 撤回链
 - [x] `verify`：换完探测每个端点+模型（OpenAI/Anthropic/Gemini 三协议）
 - [x] `rewrite`：项目内 LLM 配置一键切
+- [x] `penv`：命名 provider 库 + 项目 `.env` 一键切（补 canonical 键、快照、脱敏）
 - [x] `rules`：行为 snippet（caveman + rtk）注入 / 移除
 - [ ] continue / crush best-effort（模型在 SQLite，脆弱）
 - [ ] trae / roo / copilot 探测（大概率无明文 → 不支持）
