@@ -30,6 +30,7 @@
 ## 目录
 
 - [TL;DR](#tldr)
+- [CLI 体验](#cli-体验)
 - [文档（DeepWiki）](https://app.devin.ai/org/xing-ling-ji-zhu/wiki/Tonystarkw12/cc-switch-enhanced?branch=master)
 - [安装](#安装)
 - [`ccse rules` —— 行为注入（caveman + rtk）](#ccse-rules--行为注入caveman--rtk)
@@ -60,6 +61,19 @@ ccse rules --apply                      # 给全部 agent 注入 caveman+rtk 行
 ccse penv ./myproj newapi               # 项目 .env 一键换 provider（库: ~/.ccse/providers.toml）
 ccse list                               # 列全部 adapter（含未安装）
 ```
+
+## CLI 体验
+
+```bash
+ccse --version                        # 版本（单一来源: src/ccse/__init__.py，hatchling dynamic）
+ccse -v --model "X"                   # verbose: 列出快照路径与逐文件改动
+ccse -q --model "X"                   # quiet: 压掉提示/注释行，只留结果与错误
+ccse show --json                      # list/show/verify/profiles/history/snapshots/current 均支持 --json
+ccse current                          # 反查当前状态命中哪个 profile（● = 完全命中）
+ccse completion zsh > ~/.zfunc/_ccse  # 补全脚本（zsh 需 fpath 含 ~/.zfunc 且在 compinit 前；bash 同理）
+```
+
+`--json` 输出稳定键名：`list` → `{os, env_file, adapters[]}`；`show` → `{agents[{id, slots[{key,label,kind,current,primary}]}]}`（api_key 脱敏）；`verify` → `{results[], summary{pass,warn,fail,skip}}` 且 fail 时退出码 1；`current` → `{slots_set, best, profiles[{name,matched,total,coverage,exact}]}`。
 
 **`--model` 现在连 subagent 一起换**：opencode 的 `agent.{build,explore,general,plan}`、openclaw 的 subagent、snow 的 basicModel、claude 的 `CLAUDE_CODE_SUBAGENT_MODEL` 都跟着主模型走，各槽保留自己的路由前缀（`newapi/...`、`dmx/...`）。Claude 的 haiku/sonnet/opus 三档默认不动——想统一再单独切。
 
@@ -271,10 +285,11 @@ pipx/uv 装一个 CLI，stdlib（`argparse`/`tomllib`/`json`/`urllib`）为主�
 - [x] `verify`：换完探测每个端点+模型（OpenAI/Anthropic/Gemini 三协议）
 - [x] `rewrite`：项目内 LLM 配置一键切
 - [x] `penv`：命名 provider 库 + 项目 `.env` 一键切（补 canonical 键、快照、脱敏）
+- [x] `ccse current` 反查当前命中的 profile
+- [x] CLI 完善：`--version`（单一来源）/ `completion zsh|bash` / 只读命令 `--json` / `-v`/`-q`
 - [x] `rules`：行为 snippet（caveman + rtk）注入 / 移除
 - [ ] continue / crush best-effort（模型在 SQLite，脆弱）
 - [ ] trae / roo / copilot 探测（大概率无明文 → 不支持）
-- [ ] `ccse current` 反查当前命中的 profile
 - [ ] profile 校验：roundtrip 自检
 
 ---

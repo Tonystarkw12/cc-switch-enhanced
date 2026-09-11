@@ -149,7 +149,12 @@ def append_history(record) -> None:
 
 
 def info(msg: str) -> None:
+    if QUIET:
+        return
     print(msg, file=sys.stderr)
+
+
+QUIET = False  # set from cli --quiet; suppresses hints/notes, never errors
 
 
 def die(msg: str, code: int = 2) -> None:

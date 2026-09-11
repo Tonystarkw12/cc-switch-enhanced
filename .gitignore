@@ -20,5 +20,7 @@ build/
 .serena/
 .deepeval/
 .ruff_cache/
+.hallmark/
 logs/
 AGENTS.md
+.tgrep/

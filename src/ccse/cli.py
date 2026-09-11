@@ -22,7 +22,8 @@ PROFILES_PATH = config.HOME / ".ccse" / "profiles.toml"
 # adapters whose api_key is an env-var reference and get the literal written to
 # the shell rc / user env (codex/grok/reasonix/memmy/omp/prime). verify must
 # snapshot that file too.
-_ENV_KEY_ADAPTERS = ("codex", "grok", "reasonix", "memmy", "omp", "prime")
+_ENV_KEY_ADAPTERS = ("codex", "grok", "reasonix", "memmy", "omp", "prime",
+                     "ante")
 
 
 def _load_adapters():
@@ -416,13 +417,22 @@ def _probe_endpoint(base: str, key: str | None, model: str | None,
     except (urllib.error.URLError, TimeoutError, socket.timeout, ssl.SSLError,
             OSError) as e:
         return ("FAIL", f"endpoint unreachable: {getattr(e, 'reason', e)}")
-    except Exception as e:
-        return ("FAIL", f"response parse error: {e}")
+    except Exception:
+        # many gateways serve their web UI at / — retry the /v1-prefixed API
+        url = config.ensure_openai_v1(base).rstrip("/") + "/models"
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers=headers),
+                                        timeout=timeout) as r:
+                body = json.loads(r.read().decode("utf-8", "replace"))
+        except Exception as e:
+            return ("FAIL", f"response parse error: {e}")
     ids = [m.get("id") for m in body.get("data", []) if isinstance(m, dict)]
     if model and ids:
         probe_model = model.split("/", 1)[-1]  # strip router prefix (newapi/X)
         probe_model = probe_model.removesuffix("[1M]")  # strip claude suffix
-        if probe_model not in ids:
+        if probe_model not in ids and not any(
+                isinstance(i, str) and i.endswith("/" + probe_model)
+                for i in ids):
             return ("WARN", f"endpoint ok, but model {model!r} NOT in /models "
                             f"({len(ids)} listed) — calls will fail")
     return ("PASS", f"endpoint ok, {len(ids)} models listed"

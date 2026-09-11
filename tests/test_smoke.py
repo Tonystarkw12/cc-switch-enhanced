@@ -243,8 +243,9 @@ def test_codex_literal_api_key(tmp_path: Path, monkeypatch):
 
 def test_codex_releases_openai_auth_on_gateway(tmp_path: Path):
     """requires_openai_auth=true + non-OpenAI base_url bricks codex (OAuth
-    demanded, api_key ignored); switching base_url via ccse must release it.
-    api.openai.com providers keep the flag."""
+    demanded, api_key ignored); repointing base_url via ccse must delete the
+    flag (absent = default false). A model-only apply never touches auth
+    options. api.openai.com providers keep the flag."""
     import tomllib
     from ccse import codex as codex_mod
     cfg = tmp_path / "config.toml"
@@ -255,10 +256,15 @@ def test_codex_releases_openai_auth_on_gateway(tmp_path: Path):
         'requires_openai_auth = true\n')
     codex_mod.CodexAdapter.path = cfg  # type: ignore[misc]
     a = codex_mod.CodexAdapter()
-    diffs = a.apply({"codex.base_url": "http://10.0.0.5/v1"}, dry=False)
-    assert any("requires_openai_auth" in d and "false" in d for d in diffs)
+    # model-only apply: auth flag untouched
+    a.apply({"codex.model": "gpt-5.2"}, dry=False)
     d = tomllib.loads(cfg.read_text())
-    assert d["model_providers"]["krill"]["requires_openai_auth"] is False
+    assert d["model_providers"]["krill"]["requires_openai_auth"] is True
+    # base_url repoint: flag deleted, not flipped to false
+    diffs = a.apply({"codex.base_url": "http://10.0.0.5/v1"}, dry=False)
+    assert any("requires_openai_auth" in d2 for d2 in diffs)
+    d = tomllib.loads(cfg.read_text())
+    assert "requires_openai_auth" not in d["model_providers"]["krill"]
     assert d["model_providers"]["krill"]["base_url"] == "http://10.0.0.5/v1"
     # OpenAI-host provider keeps the flag
     cfg.write_text(

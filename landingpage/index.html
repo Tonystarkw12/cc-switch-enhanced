@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ccse — 一行命令，切换全部 AI 编程助手</title>
+<meta name="description" content="ccse 为 37 个 AI 编程助手同时切换模型、中转地址与 API key：写前自动快照、verify 端点探测、undo 一键回滚。">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<nav class="nv" aria-label="主导航">
+  <a class="nv__mark" href="#top">ccse</a>
+  <ul class="nv__links">
+    <li><a class="nv__link" href="#install">安装</a></li>
+    <li><a class="nv__link nv__link--adapters" href="#adapters">适配器</a></li>
+    <li><a class="nv__link" href="https://github.com/Tonystarkw12/cc-switch-enhanced">GitHub ↗</a></li>
+  </ul>
+</nav>
+
+<main id="top">
+
+  <!-- H4 · stat-led hero -->
+  <header class="hero">
+    <div class="wrap hero__grid">
+      <p class="figure" aria-label="37 个适配器"><span id="stat" aria-hidden="true">37</span><span class="unit">个适配器</span></p>
+      <div class="hero__right">
+        <p class="qualifier">个 AI 编程助手，一行命令同时切换模型、端点与 key。</p>
+        <p class="lede">ccse 读写每个 agent 的原生配置：Claude Code、Codex、opencode、Gemini、Qwen Code、aider……换聚合端不再逐个改文件。写前自动快照，<code>ccse undo</code> 一键回滚。</p>
+        <div class="hero__cta">
+          <button class="pill pill--fill" type="button" data-copy="uv tool install git+https://github.com/Tonystarkw12/cc-switch-enhanced">复制安装命令</button>
+          <a class="tlink" href="https://github.com/Tonystarkw12/cc-switch-enhanced">查看源码 ↗</a>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- install -->
+  <section class="sec sec--tight" id="install">
+    <div class="wrap">
+      <header class="head-hang">
+        <h2>安装</h2>
+        <p class="head-note">单机 CLI，本地运行；配置文件写完即生效，无后台、无账号。</p>
+      </header>
+      <div class="code">
+        <button class="copy" type="button" data-copy="uv tool install git+https://github.com/Tonystarkw12/cc-switch-enhanced">复制</button>
+<pre><span class="c"># 一行安装（uv，直接装 GitHub 主分支）</span>
+<span class="p">$</span> uv tool install git+https://github.com/Tonystarkw12/cc-switch-enhanced<span class="caret" aria-hidden="true"></span></pre>
+      </div>
+      <div class="code">
+        <button class="copy" type="button" data-copy="git clone https://github.com/Tonystarkw12/cc-switch-enhanced
+cd cc-switch-enhanced
+uv tool install .">复制</button>
+<pre><span class="c"># 或克隆后本地安装；pipx 同理（pipx install .）</span>
+<span class="p">$</span> git clone https://github.com/Tonystarkw12/cc-switch-enhanced
+<span class="p">$</span> cd cc-switch-enhanced && uv tool install .
+<span class="c"># 切换</span>
+<span class="p">$</span> ccse --model "glm-5.2"</pre>
+      </div>
+      <p class="install-note">Windows 支持 <code>setx</code> 持久化 env 型变量；升级 <code>uv tool upgrade cc-switch-enhanced</code> 或重跑安装命令加 <code>--force</code>。</p>
+    </div>
+  </section>
+
+  <!-- how · command rows -->
+  <section class="sec" id="how">
+    <div class="wrap">
+      <header class="head-hang">
+        <h2>一行切换，写前快照</h2>
+      </header>
+      <div class="rows">
+        <div class="row">
+          <p class="row__cmd">ccse <span class="flag">--model</span> "glm-5.2"</p>
+          <p class="row__what">全 fleet 主模型一键切换，subagent 槽位跟随，claude 自动补 <code>[1M]</code> 标记。</p>
+        </div>
+        <div class="row">
+          <p class="row__cmd">ccse <span class="flag">--base-url</span> U <span class="flag">--api-key</span> K</p>
+          <p class="row__what">端点与 key 同步切换；env 型 agent 的 key 写入 <code>~/.zshrc</code>（Windows 走 <code>setx</code>）。</p>
+        </div>
+        <div class="row">
+          <p class="row__cmd">ccse apply <span class="flag">&lt;profile&gt;</span></p>
+          <p class="row__what">按 <code>~/.ccse/profiles.toml</code> 配方回切整套组合；<code>genprofile</code> 把当前状态抓成配方。</p>
+        </div>
+        <div class="row">
+          <p class="row__cmd">ccse verify</p>
+          <p class="row__what">写完探测每个端点：key 是否有效、模型是否在列表里，FAIL 退出码 1。</p>
+        </div>
+        <div class="row">
+          <p class="row__cmd">ccse undo</p>
+          <p class="row__what">恢复最近一次 apply 的写前快照，恢复前再备份一层，不会二次丢数据。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- adapters · F3 spec sheet -->
+  <section class="sec" id="adapters">
+    <div class="wrap">
+      <header class="head-hang">
+        <h2>覆盖 37 个 agent</h2>
+        <p class="head-note">只动声明过的槽位，其余配置一字不改。节选：</p>
+      </header>
+      <table class="spec">
+        <thead>
+          <tr><th scope="col">适配器</th><th scope="col">配置文件</th><th scope="col">--model 写入</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>claude</td><td data-label="配置文件">~/.claude/settings.json</td><td data-label="模型槽位" class="muted">env.ANTHROPIC_MODEL + subagent</td></tr>
+          <tr><td>codex</td><td data-label="配置文件">~/.codex/config.toml</td><td data-label="模型槽位" class="muted">顶层 model + 活动 provider</td></tr>
+          <tr><td>opencode</td><td data-label="配置文件">opencode.json</td><td data-label="模型槽位" class="muted">model + 4 个 agent 槽</td></tr>
+          <tr><td>gemini</td><td data-label="配置文件">~/.gemini/.env</td><td data-label="模型槽位" class="muted">GEMINI_MODEL</td></tr>
+          <tr><td>qwen</td><td data-label="配置文件">~/.qwen/settings.json</td><td data-label="模型槽位" class="muted">model.name</td></tr>
+          <tr><td>aider</td><td data-label="配置文件">~/.aider.conf.yml</td><td data-label="模型槽位" class="muted">model（裸名自动补 openai/）</td></tr>
+          <tr><td>droid</td><td data-label="配置文件">~/.factory/settings.json</td><td data-label="模型槽位" class="muted">customModels 组合 id</td></tr>
+          <tr><td>kimi</td><td data-label="配置文件">~/.zshrc（env）</td><td data-label="模型槽位" class="muted">KIMI_MODEL_NAME</td></tr>
+        </tbody>
+      </table>
+      <p class="spec-more">另有 29 个：<code>crush</code>、<code>droid</code>、<code>forge</code>、<code>grok</code>、<code>hermes</code>、<code>kilocode</code>、<code>memmy</code>、<code>omp</code>、<code>pi</code>、<code>prime</code>…… <a class="tlink" href="https://github.com/Tonystarkw12/cc-switch-enhanced#adapter-覆盖37-个">完整表格见 README ↗</a></p>
+    </div>
+  </section>
+
+  <!-- safety -->
+  <section class="sec sec--tight" id="safety">
+    <div class="wrap">
+      <header class="head-hang">
+        <h2>改动可撤回</h2>
+      </header>
+      <ul class="safety">
+        <li><b>写前快照</b><span>每次 apply 先把要改的文件存进 <code>~/.ccse/snapshots/</code>，<code>ccse undo [stamp]</code> 任意回滚。</span></li>
+        <li><b>原子写</b><span>临时文件 + <code>os.replace</code>；解析失败即中止，不碰原文件。</span></li>
+        <li><b>预览先行</b><span><code>--dry</code> 与 <code>ccse diff</code> 只打印差异，不落盘。</span></li>
+        <li><b>坏配置不炸批</b><span>某个 agent 配置损坏时跳过并告警，其余照常切换。</span></li>
+        <li><b>key 不留痕</b><span><code>show</code>/<code>verify</code> 只显示前 6 位；history 记录对 key 脱敏。</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- CTA strip -->
+  <section class="strip">
+    <div class="wrap strip__in">
+      <p class="strip__line">换聚合端，不该是一个个改配置文件。</p>
+      <div class="hero__cta">
+        <a class="pill pill--fill" href="#install">安装 ccse</a>
+        <a class="tlink" href="https://github.com/Tonystarkw12/cc-switch-enhanced">GitHub 仓库 ↗</a>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<!-- Ft2 · inline rule -->
+<footer class="foot">
+  <div class="wrap">
+    <p><span>© 2026 cc-switch-enhanced</span><span>MIT</span><a href="https://github.com/Tonystarkw12/cc-switch-enhanced">GitHub</a><a href="https://github.com/Tonystarkw12/cc-switch-enhanced/releases">Releases</a></p>
+  </div>
+</footer>
+
+<script>
+(function () {
+  var reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var el = document.getElementById("stat");
+  var target = 37;
+  if (reduce) { el.textContent = target; }
+  else {
+    var t0 = null;
+    var tick = function (t) {
+      if (t0 === null) t0 = t;
+      var k = Math.min((t - t0) / 1200, 1);
+      k = 1 - Math.pow(1 - k, 3); /* ease-out cubic */
+      el.textContent = Math.round(k * target);
+      if (k < 1) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }
+
+  document.querySelectorAll("[data-copy]").forEach(function (btn) {
+    btn.dataset.label = btn.textContent;
+    btn.addEventListener("click", function () {
+      navigator.clipboard.writeText(btn.dataset.copy).then(function () {
+        btn.dataset.state = "copied";
+        btn.textContent = "已复制 ✓";
+        setTimeout(function () {
+          delete btn.dataset.state;
+          btn.textContent = btn.dataset.label;
+        }, 2500);
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

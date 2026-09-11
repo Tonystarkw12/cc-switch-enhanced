@@ -81,17 +81,19 @@ class CodexAdapter:
                         config_dirty = True
             # requires_openai_auth=true makes codex demand ChatGPT OAuth for
             # this provider and ignore api_key — correct for api.openai.com,
-            # a brick for any aggregator gateway. When ccse repoints the
-            # endpoint/key at a non-OpenAI host, release the flag.
-            base = relevant.get("base_url") or prov.get("base_url") or ""
-            if prov.get("requires_openai_auth") is True and \
-                    "api.openai.com" not in base and "chatgpt.com" not in base:
-                diffs.append(
-                    f"  model_providers[{prov_name}].requires_openai_auth: "
-                    f"true -> false (non-OpenAI base_url; OAuth would brick it)")
-                if not dry:
-                    prov["requires_openai_auth"] = False
-                    config_dirty = True
+            # a brick for any aggregator gateway. Only when ccse itself
+            # repoints the endpoint/key, delete the flag (absent = default
+            # false). A model-only apply must not touch auth options.
+            if "base_url" in relevant or "api_key" in relevant:
+                base = relevant.get("base_url") or prov.get("base_url") or ""
+                if prov.get("requires_openai_auth") is True and \
+                        "api.openai.com" not in base and "chatgpt.com" not in base:
+                    diffs.append(
+                        f"  model_providers[{prov_name}].requires_openai_auth: "
+                        f"true -> (removed) (non-OpenAI base_url; OAuth would brick it)")
+                    if not dry:
+                        prov.pop("requires_openai_auth")
+                        config_dirty = True
             if "api_key" in relevant:
                 val = relevant["api_key"]
                 env_var = prov.get("env_key")
