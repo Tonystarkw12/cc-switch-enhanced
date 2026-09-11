@@ -22,7 +22,7 @@ def test_registry_loads_all_targets():
                    "grok", "forge", "hermes", "snow", "crush", "droid",
                    "memmy", "prime", "omp", "kilo", "openakita", "jcode",
                    "dsh", "openclaude", "openhands", "commandcode", "mmx",
-                   "aider", "pigo", "penguin"):
+                   "aider", "pigo", "penguin", "ante"):
         assert expect in ids, f"missing adapter {expect}"
 
 
@@ -1108,7 +1108,8 @@ def test_forge_adapter(tmp_path, monkeypatch):
 
 
 def test_crush_adapter(tmp_path, monkeypatch):
-    """Crush: model lives in providers.json, credentials in crush.json."""
+    """Crush: durable selection in crush.json (models.large + provider
+    models[]); providers.json (Catwalk-managed, gets regenerated) mirrored."""
     from ccse import extra as extra_mod
     cfg = tmp_path / "crush.json"
     cfg.write_text(json.dumps({"providers": {"zai": {"id": "zai",
@@ -1124,7 +1125,7 @@ def test_crush_adapter(tmp_path, monkeypatch):
         "path": cfg, "available": property(lambda self: True)})
     # reuse the real adapter but point providers path at tmp
     real = extra_mod.CrushAdapter
-    real._providers_path = lambda self: provs  # type: ignore[method-assign]
+    monkeypatch.setattr(real, "_providers_path", lambda self: provs)
 
     a = cls()
     slots = a.slots()
@@ -1132,14 +1133,69 @@ def test_crush_adapter(tmp_path, monkeypatch):
     diffs = a.apply({"crush.model": "deepseek-v4-flash",
                      "crush.base_url": "http://b",
                      "crush.api_key": "sk-2"}, dry=False)
-    assert len(diffs) == 4  # default_large + models[] entry + url + key
-    cat = json.loads(provs.read_text())[0]
-    assert cat["default_large_model_id"] == "deepseek-v4-flash"
-    ids = [m["id"] for m in cat["models"]]
-    assert "deepseek-v4-flash" in ids and "glm-5.2" in ids
+    assert len(diffs) == 6  # models.large + 2x models[] entries + default_large + url + key
     after = json.loads(cfg.read_text())
+    assert after["models"]["large"] == {"provider": "zai",
+                                        "model": "deepseek-v4-flash"}
+    ids = [m["id"] for m in after["providers"]["zai"]["models"]]
+    assert "deepseek-v4-flash" in ids
     assert after["providers"]["zai"]["base_url"] == "http://b"
     assert after["providers"]["zai"]["api_key"] == "sk-2"
+    cat = json.loads(provs.read_text())[0]
+    assert cat["default_large_model_id"] == "deepseek-v4-flash"
+    cat_ids = [m["id"] for m in cat["models"]]
+    assert "deepseek-v4-flash" in cat_ids and "glm-5.2" in cat_ids
+    # slots now report the crush.json selection, re-applying is a no-op
+    assert a.slots()[0].current == "deepseek-v4-flash"
+    assert a.apply({"crush.model": "deepseek-v4-flash"}, dry=False) == []
+
+
+def test_ante_adapter(tmp_path, monkeypatch):
+    """Ante: model/provider in ~/.ante/settings.json; gateway base_url +
+    api_key via OPENAI_COMPATIBLE_* env persisted in the shell rc; provider
+    auto-set to openai-compatible on first gateway switch."""
+    from ccse import extra as extra_mod
+    from ccse import envrc as envrc_mod
+    settings = tmp_path / "settings.json"
+    settings.write_text(json.dumps({"model": None, "provider": None,
+                                    "theme": "Dark mode"}))
+    rc = tmp_path / "zshrc"
+    rc.write_text("export OPENAI_COMPATIBLE_API_KEY='sk-old'\n")
+
+    monkeypatch.setattr(extra_mod, "HOME", tmp_path, raising=False)
+    cls = type("_AnteTest", (extra_mod.AnteAdapter,), {
+        "path": settings, "available": property(lambda self: True)})
+    monkeypatch.setattr(config, "SHELL_RC", rc)
+
+    a = cls()
+    slots = a.slots()
+    assert slots[0].current is None                  # model unset
+    assert slots[1].current is None                  # provider unset
+    assert slots[2].current is None                  # base_url unset
+    assert slots[3].current == "sk-old"              # api_key from rc
+    diffs = a.apply({"ante.model": "qwen3.8:27b",
+                     "ante.base_url": "http://192.168.0.14:6333"}, dry=True)
+    assert len(diffs) == 3                           # model + provider heal + env
+    assert json.loads(settings.read_text())["model"] is None  # dry: no write
+
+    a.apply({"ante.model": "qwen3.8:27b",
+             "ante.base_url": "http://192.168.0.14:6333"}, dry=False)
+    d = json.loads(settings.read_text())
+    assert d["model"] == "qwen3.8:27b"
+    assert d["provider"] == "openai-compatible"      # healed
+    assert d["theme"] == "Dark mode"                 # untouched
+    assert envrc_mod._read_vars(rc, {"OPENAI_COMPATIBLE_BASE_URL"}) == {
+        "OPENAI_COMPATIBLE_BASE_URL": "http://192.168.0.14:6333"}
+    assert a.slots()[0].current == "qwen3.8:27b"
+    assert a.apply({"ante.model": "qwen3.8:27b",
+                    "ante.base_url": "http://192.168.0.14:6333"},
+                   dry=False) == []                  # idempotent
+    # explicit provider wins and is never auto-overridden
+    a.apply({"ante.provider": "zai"}, dry=False)
+    out = a.apply({"ante.model": "glm-5.2",
+                   "ante.base_url": "http://x"}, dry=False)
+    assert not any("provider" in x for x in out)
+    assert json.loads(settings.read_text())["provider"] == "zai"
 
 
 def test_prime_dangling_provider_repointed(tmp_path: Path, monkeypatch):

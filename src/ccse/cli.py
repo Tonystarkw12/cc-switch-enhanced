@@ -8,6 +8,7 @@ agent's configured endpoint to confirm the switch still works."""
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import tomllib
@@ -69,9 +70,17 @@ def _filter_adapters(adapters, only: str | None, exclude: str | None):
 
 # ---- show / list / profiles ---------------------------------------------
 
-def cmd_list(_args) -> int:
+def cmd_list(args) -> int:
     adapters = _load_adapters()
     rc = str(config.SHELL_RC) if config.SHELL_RC else "user env (setx)"
+    if getattr(args, "json", False):
+        print(json.dumps({
+            "os": config.OS_NAME, "env_file": rc,
+            "adapters": [{"id": a.id, "name": a.name, "available": a.available,
+                          "path": str(a.path) if a.path is not None else None}
+                         for a in adapters],
+        }, ensure_ascii=False, indent=2))
+        return 0
     print(f"{'adapter':<12} {'name':<16} {'avail':<5} path   [os={config.OS_NAME}, env={rc}]")
     for a in adapters:
         p = a.path if a.path is not None else "user env (setx)"
@@ -81,19 +90,32 @@ def cmd_list(_args) -> int:
 
 def cmd_show(args) -> int:
     adapters = _filter_adapters(_load_adapters(), args.only, args.exclude)
-    any_slot = False
+    collected = []
     for a in adapters:
         slots = _safe_slots(a)
         if not slots:
             continue
-        head = f"[{a.id}] {a.name}  {'(installed)' if a.available else '(missing)'}"
+        primary = _primary_key(a)
+        collected.append({
+            "id": a.id, "name": a.name, "available": a.available,
+            "slots": [{"key": s.key, "label": s.label, "kind": s.kind,
+                       "current": (config.redact(s.current)
+                                   if s.kind == KIND_API_KEY and s.current is not None
+                                   else s.current),
+                       "primary": s.key == primary}
+                      for s in slots],
+        })
+    if getattr(args, "json", False):
+        print(json.dumps({"agents": collected}, ensure_ascii=False, indent=2))
+        return 0
+    any_slot = False
+    for entry in collected:
+        head = f"[{entry['id']}] {entry['name']}  {'(installed)' if entry['available'] else '(missing)'}"
         print(head)
-        for s in slots:
-            cur = s.current if s.current is not None else "<unset>"
-            if s.kind == KIND_API_KEY and s.current is not None:
-                cur = config.redact(s.current)
-            mark = " ★" if s.key == _primary_key(a) else ""
-            print(f"  {s.label:<28} = {cur}{mark}")
+        for s in entry["slots"]:
+            cur = s["current"] if s["current"] is not None else "<unset>"
+            mark = " ★" if s["primary"] else ""
+            print(f"  {s['label']:<28} = {cur}{mark}")
         any_slot = True
     if not any_slot:
         print("no configured agents found", file=sys.stderr)
@@ -117,8 +139,11 @@ def _read_profiles() -> dict[str, dict[str, str]]:
     return out
 
 
-def cmd_profiles(_args) -> int:
+def cmd_profiles(args) -> int:
     profs = _read_profiles()
+    if getattr(args, "json", False):
+        print(json.dumps(profs, ensure_ascii=False, indent=2))
+        return 0
     if not profs:
         print(f"(no profiles in {PROFILES_PATH})", file=sys.stderr)
         return 0
@@ -140,7 +165,8 @@ def _resolve_profile(name: str) -> dict[str, str]:
 
 def _apply_assignments(assignments: dict[str, str], *, dry: bool,
                        no_backup: bool, only: str | None,
-                       exclude: str | None, tag: str) -> int:
+                       exclude: str | None, tag: str,
+                       verbose: bool = False) -> int:
     adapters = _filter_adapters(_load_adapters(), only, exclude)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     mode = "dry-run" if dry else "applied"
@@ -168,8 +194,13 @@ def _apply_assignments(assignments: dict[str, str], *, dry: bool,
             config.append_history({
                 "stamp": stamp, "tag": tag, "mode": mode,
                 "n_files": len(touched),
-                "assignments": {k: v for k, v in assignments.items()},
+                "assignments": {k: (config.redact(v) if k.endswith(".api_key") else v)
+                                for k, v in assignments.items()},
             })
+            if verbose:
+                config.info(f"snapshot {stamp}: {len(touched)} file(s)")
+                for f in touched:
+                    config.info(f"  {f}")
 
     total = 0
     skipped = 0
@@ -284,7 +315,7 @@ def cmd_apply(args) -> int:
         config.die("nothing to do")
     return _apply_assignments(assignments, dry=False, no_backup=args.no_backup,
                               only=args.only, exclude=args.exclude,
-                              tag=", ".join(tags))
+                              tag=", ".join(tags), verbose=args.verbose)
 
 
 def cmd_diff(args) -> int:
@@ -304,7 +335,8 @@ def cmd_diff(args) -> int:
     if not assignments:
         config.die("diff needs --model, --base-url/--api-key, or a PROFILE name")
     return _apply_assignments(assignments, dry=True, no_backup=True,
-                              only=args.only, exclude=args.exclude, tag="diff")
+                              only=args.only, exclude=args.exclude, tag="diff",
+                              verbose=args.verbose)
 
 
 def cmd_genprofile(args) -> int:
@@ -341,13 +373,18 @@ def _toml_str(s: str) -> str:
 
 # ---- undo / history ------------------------------------------------------
 
-def cmd_history(_args) -> int:
-    import json
+def cmd_history(args) -> int:
     if not config.HISTORY_INDEX.exists():
+        if getattr(args, "json", False):
+            print("[]")
+            return 0
         print("(no apply history yet)", file=sys.stderr)
         return 0
     rows = [json.loads(l) for l in config.HISTORY_INDEX.read_text("utf-8").splitlines()
             if l.strip()]
+    if getattr(args, "json", False):
+        print(json.dumps(rows, ensure_ascii=False, indent=2))
+        return 0
     if not rows:
         print("(history empty)", file=sys.stderr)
         return 0
@@ -358,8 +395,11 @@ def cmd_history(_args) -> int:
     return 0
 
 
-def cmd_snapshots(_args) -> int:
+def cmd_snapshots(args) -> int:
     snaps = config.list_snapshots()
+    if getattr(args, "json", False):
+        print(json.dumps(snaps, ensure_ascii=False, indent=2))
+        return 0
     if not snaps:
         print("(no snapshots)", file=sys.stderr)
         return 0
@@ -468,9 +508,63 @@ def cmd_verify(args) -> int:
     n_warn = sum(1 for _, s, _ in results if s == "WARN")
     n_fail = sum(1 for _, s, _ in results if s == "FAIL")
     n_skip = sum(1 for _, s, _ in results if s == "SKIP")
+    if getattr(args, "json", False):
+        print(json.dumps({
+            "results": [{"id": aid, "status": status, "message": msg}
+                        for aid, status, msg in results],
+            "summary": {"pass": n_pass, "warn": n_warn,
+                        "fail": n_fail, "skip": n_skip},
+        }, ensure_ascii=False, indent=2))
+        return 1 if n_fail else 0
     print(f"\n{n_pass} pass, {n_warn} warn, {n_fail} fail, {n_skip} skip "
           f"(of {len(results)} adapters)", file=sys.stderr)
     return 1 if n_fail else 0
+
+
+# ---- current -------------------------------------------------------------
+
+def cmd_current(args) -> int:
+    """Reverse-lookup: which saved profile does the live state match best?"""
+    adapters = _filter_adapters(_load_adapters(), args.only, args.exclude)
+    state: dict[str, str] = {}
+    for a in adapters:
+        if not a.available:
+            continue
+        for s in _safe_slots(a):
+            if s.current is not None:
+                state[s.key] = s.current
+    rows = []
+    for name, flat in _read_profiles().items():
+        matched = sum(1 for k, v in flat.items() if state.get(k) == v)
+        rows.append({"name": name, "matched": matched, "total": len(flat),
+                     "coverage": round(matched / len(flat), 3) if flat else 0.0,
+                     "exact": bool(flat) and matched == len(flat)})
+    rows.sort(key=lambda r: (-r["coverage"], -r["matched"], r["name"]))
+    if getattr(args, "json", False):
+        print(json.dumps({"slots_set": len(state), "best": rows[0]["name"] if rows else None,
+                          "profiles": rows}, ensure_ascii=False, indent=2))
+        return 0
+    if not rows:
+        print(f"(no profiles in {PROFILES_PATH})", file=sys.stderr)
+        return 0
+    print(f"current state: {len(state)} slot(s) set across installed agents")
+    for r in rows:
+        mark = "●" if r["exact"] else " "
+        print(f" {mark} {r['name']:<20} {r['matched']}/{r['total']} "
+              f"({r['coverage']:.0%})")
+    if rows[0]["exact"]:
+        print(f"active profile: {rows[0]['name']}", file=sys.stderr)
+    else:
+        print("no profile matches exactly — `ccse diff <name>` previews a switch",
+              file=sys.stderr)
+    return 0
+
+
+# ---- completion ----------------------------------------------------------
+
+def cmd_completion(args) -> int:
+    from . import completion
+    return completion.run(args.shell)
 
 
 # ---- parser --------------------------------------------------------------
@@ -490,11 +584,31 @@ def _add_endpoint(p):
                         "profiles to keep keys out of shell history.")
 
 
+def _version() -> str:
+    """Installed-dist version; fall back to the source tree's __version__."""
+    try:
+        from importlib.metadata import version
+        return version("cc-switch-enhanced")
+    except Exception:  # noqa: BLE001 — running from a checkout without install
+        from . import __version__
+        return __version__
+
+
+def _add_json(p) -> None:
+    p.add_argument("--json", action="store_true",
+                   help="output machine-readable JSON (for scripts)")
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="ccse",
         description="One-line model-name switch across coding agents. "
                     "Default action with --model: switch all agents' primary slot.")
+    p.add_argument("-v", "--verbose", action="store_true",
+                   help="apply: list the snapshot path and every touched file")
+    p.add_argument("-q", "--quiet", action="store_true",
+                   help="suppress hints and notes (results and errors still print)")
+    p.add_argument("--version", action="version", version=f"ccse {_version()}")
     p.add_argument("-m", "--model", metavar="NAME",
                    help="switch every agent's primary model slot to NAME "
                         "(shorthand for `apply --model NAME`). Bare names keep "
@@ -513,13 +627,16 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="cmd")
 
     sl = sub.add_parser("list", help="list installed/known adapters")
+    _add_json(sl)
     sl.set_defaults(func=cmd_list)
 
     ss = sub.add_parser("show", help="show current model per agent slot")
     _add_scope(ss)
+    _add_json(ss)
     ss.set_defaults(func=cmd_show)
 
     sp = sub.add_parser("profiles", help="list profiles in ~/.ccse/profiles.toml")
+    _add_json(sp)
     sp.set_defaults(func=cmd_profiles)
 
     pa = sub.add_parser("apply", help="write --model/--base-url/--api-key or a profile into all agents")
@@ -552,9 +669,11 @@ def build_parser() -> argparse.ArgumentParser:
     pu.set_defaults(func=cmd_undo)
 
     ph = sub.add_parser("history", help="show apply history")
+    _add_json(ph)
     ph.set_defaults(func=cmd_history)
 
     psn = sub.add_parser("snapshots", help="list saved snapshots")
+    _add_json(psn)
     psn.set_defaults(func=cmd_snapshots)
 
     pv = sub.add_parser(
@@ -563,6 +682,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_scope(pv)
     pv.add_argument("--timeout", type=int, default=8,
                     help="per-endpoint HTTP timeout in seconds (default 8)")
+    _add_json(pv)
     pv.set_defaults(func=cmd_verify)
 
     pr = sub.add_parser(
@@ -605,6 +725,17 @@ def build_parser() -> argparse.ArgumentParser:
     pe.add_argument("--rm", action="store_true", help="remove provider NAME")
     pe.add_argument("--dry", action="store_true", help="preview only, write nothing")
     pe.set_defaults(func=cmd_penv)
+
+    pcur = sub.add_parser(
+        "current", help="which saved profile matches the live state best (●=exact)")
+    _add_scope(pcur)
+    _add_json(pcur)
+    pcur.set_defaults(func=cmd_current)
+
+    pc = sub.add_parser("completion", help="print a shell completion script")
+    pc.add_argument("shell", nargs="?", default="zsh", choices=["zsh", "bash"],
+                    help="target shell (default zsh)")
+    pc.set_defaults(func=cmd_completion)
 
     return p
 
@@ -661,6 +792,7 @@ def cmd_rules(args) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    config.QUIET = getattr(args, "quiet", False)
     # top-level --model shorthand: act as `apply --model`
     if getattr(args, "cmd", None) is None:
         if getattr(args, "model", None) is not None or \
@@ -684,7 +816,8 @@ def main(argv: list[str] | None = None) -> int:
             tag = " --".join(parts)
             return _apply_assignments(
                 assignments, dry=args.dry, no_backup=args.no_backup,
-                only=args.only, exclude=args.exclude, tag=tag)
+                only=args.only, exclude=args.exclude, tag=tag,
+                verbose=getattr(args, "verbose", False))
         parser.print_help(sys.stderr)
         return 2
     return args.func(args)

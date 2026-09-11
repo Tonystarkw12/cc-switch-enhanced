@@ -155,7 +155,8 @@ ccse profiles                 # 列已有 profile
 | `reasonix` | `~/.reasonix/config.toml` | TOML | 活动 `[[providers]]` 的 `model` | 活动 provider `base_url` | `api_key_env` → ~/.zshrc |
 | `grok` | `~/.grok/config.toml` | TOML | `[models].default`（同步 `[model."<def>"]` 表） | `[model."<def>"].base_url` | `env_key` → ~/.zshrc |
 | `forge` | `~/.forge/.forge.toml` | TOML | `[session].model_id`（自动 `merge_system_messages=true`） | — | — |
-| `crush` | `~/.config/crush/crush.json` + `~/.local/share/crush/providers.json` | JSON | 已配置 provider 的 `default_large_model_id`（同步 `models[]` 目录） | `providers.<id>.base_url` | `providers.<id>.api_key` |
+| `crush` | `~/.config/crush/crush.json` + `~/.local/share/crush/providers.json` | JSON | `models.large`（crush.json 顶层选择，重启不丢；镜像 providers.json 目录） | `providers.<id>.base_url` | `providers.<id>.api_key` |
+| `ante` | `~/.ante/settings.json` | JSON | `model`（裸名）+ `provider`（网关切换时自动落 `openai-compatible`） | `OPENAI_COMPATIBLE_BASE_URL` → ~/.zshrc | `OPENAI_COMPATIBLE_API_KEY` → ~/.zshrc |
 | `droid` | `~/.factory/settings.json` | JSON | `sessionDefaultSettings.model`（裸名自动解析/新建 `customModels[]` 条目 → `custom:<name>-N` id） | 活动 `customModels[].baseUrl` | 活动 `customModels[].apiKey` |
 | `hermes` | `~/.hermes/config.yaml` | YAML | `model.default` | `model.base_url` | `model.api_key` |
 | `omp` | `~/.omp/agent/config.yml` | YAML | `llm.model` + `defaultModel` + `modelRoles.default`（保 `provider/` 前缀和 `:level`） | `llm.baseUrl` | `llm.apiKey` 的 `${ENV_VAR}` → ~/.zshrc / setx |
@@ -189,7 +190,7 @@ envrc 适配器只改它声明的那一行 `export VAR=...`（单引号转义，
 
 > **`[1M]` 后缀**：Claude Code 模型名带聚合端上下文窗口标记（`glm-5.2[1M]`），其它 agent 不需要。`ccse --model "glm-5.2"` 对 claude 自动补 `[1M]`；显式写 `glm-5.2[1M]` 不会叠加。
 
-> **crush / droid 的坑**：crush 模型名在 `providers.json`（模型目录），凭据在 `crush.json`，`--model` 改的是你配置的那个 provider 的 `default_large_model_id`。droid 的模型槽是**组合 id**（如 `custom:GLM-4.7-[GLM-Coding-Plan-China]-0`），`ccse --model <那个 id>` 才命中。
+> **crush / droid 的坑**：crush 会启动时从 Catwalk 重新生成 `providers.json`，外部改动会被覆盖——所以 `--model` 写的是 crush.json 的 `models.large`（持久选择）+ provider `models[]` 声明，providers.json 只做镜像。droid 的模型槽是**组合 id**（如 `custom:GLM-4.7-[GLM-Coding-Plan-China]-0`），`ccse --model <那个 id>` 才命中。
 
 字段路径支持 JSON-path 选择器：`providers[id=newapi].model`、`providers[newapi].apiModelId`（shorthand 匹配 id/provider/name/key）、`providers.openai-codex-cli.settings.model`。
 
@@ -277,7 +278,7 @@ pipx/uv 装一个 CLI，stdlib（`argparse`/`tomllib`/`json`/`urllib`）为主�
 
 **ROADMAP**
 
-- [x] 31 adapter（claude/codex/opencode/gemini/qwen/cline + codebuddy/pi/openclaw/kilocode/reasonix/grok/forge/hermes/snow/crush/droid/memmy/prime/omp/openakita/jcode + openhands/commandcode/mmx/aider/pigo/penguin + kimi/copaw/nvim envrc）
+- [x] 32 adapter（claude/codex/opencode/gemini/qwen/cline + codebuddy/pi/openclaw/kilocode/reasonix/grok/forge/hermes/snow/crush/droid/ante/memmy/prime/omp/openakita/jcode + openhands/commandcode/mmx/aider/pigo/penguin + kimi/copaw/nvim envrc）
 - [x] `--model NAME` 全量一键 + **subagent 跟随** + `--only`/`--exclude` + 保前缀 + claude 自动 `[1M]`
 - [x] `--base-url` / `--api-key` 全量一键（env 型写 ~/.zshrc、env_key 解析、codex 字面 api_key）
 - [x] `apply`/`diff` 双模式 + profile 多槽位 + `genprofile` 快照成 profile
