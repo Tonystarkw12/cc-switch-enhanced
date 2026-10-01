@@ -13,6 +13,7 @@ Status legend:
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 from . import config
@@ -1298,6 +1299,422 @@ class AnteAdapter:
             if not dry:
                 from .envrc import ensure_env_var
                 ensure_env_var(var, relevant[key])
+        if dirty and not dry:
+            config.keep_mode_write_json(self.path, d)
+        return diffs
+
+
+# ────────────── Qoder CLI: settings.json customModels[] ─────────────────
+
+class _QoderBase:
+    """qoder settings.json: top-level `model` selects a customModels[] entry
+    by its composite `key` ("provider/model", the id the CLI's model picker
+    uses). An entry carries model, baseURL, apiKey (literal or `$ENV_VAR`
+    reference), format (openai/anthropic/gemini), displayName.
+
+    --model reuses an existing entry already serving the target model, else
+    rewrites the active entry's model+key in place (endpoint/credentials
+    stay); --base-url/--api-key target the active entry. A `$VAR` apiKey is
+    kept as a reference and the value is persisted into the shell rc."""
+    model_raw = True
+
+    _ENVREF = re.compile(r"^\$([A-Za-z_][A-Za-z0-9_]*)$")
+
+    @property
+    def available(self):
+        return self.path.exists()
+
+    def _env_value(self, var):
+        """Persisted value for an env var (shell rc is the source of truth,
+        not the live process env)."""
+        if config.OS_NAME != "windows" and config.SHELL_RC is not None \
+                and config.SHELL_RC.exists():
+            from .envrc import _read_vars
+            return _read_vars(config.SHELL_RC, {var}).get(var)
+        return os.environ.get(var)
+
+    @staticmethod
+    def _entries(d):
+        e = d.get("customModels")
+        return e if isinstance(e, list) else None
+
+    def _active(self, d):
+        ents = self._entries(d) or []
+        cur = d.get("model")
+        if cur:
+            for e in ents:
+                if isinstance(e, dict) and e.get("key") == cur:
+                    return e
+        return next((e for e in ents if isinstance(e, dict)), None)
+
+    def slots(self):
+        if not self.available:
+            return []
+        d = config.load_json(self.path) or {}
+        out = [Slot(key=f"{self.id}.model", label="model", current=d.get("model"))]
+        e = self._active(d)
+        if e is not None:
+            out.append(Slot(key=f"{self.id}.base_url",
+                            label="active customModels[].baseURL",
+                            current=e.get("baseURL"), kind=KIND_BASE_URL))
+            out.append(Slot(key=f"{self.id}.api_key",
+                            label="active customModels[].apiKey",
+                            current=e.get("apiKey"), kind=KIND_API_KEY))
+        return out
+
+    def apply(self, assignments, dry=False):
+        pid = self.id
+        relevant = {k[len(pid) + 1:]: v for k, v in assignments.items()
+                    if k.startswith(pid + ".")}
+        if not relevant or not self.available:
+            return []
+        d = config.load_json(self.path) or {}
+        ents = self._entries(d)
+        diffs: list[str] = []
+        dirty = False
+        if "model" in relevant:
+            model = relevant["model"]
+            tgt = next((e for e in (ents or []) if isinstance(e, dict)
+                        and e.get("model") == model), None)
+            if tgt is not None:
+                if d.get("model") != tgt.get("key"):
+                    diffs.append(f"  model: {d.get('model')!r} -> "
+                                 f"{tgt.get('key')!r} (existing entry)")
+                    d["model"] = tgt.get("key")
+                    dirty = True
+            else:
+                if ents is None:
+                    ents = d["customModels"] = []
+                e = self._active(d)
+                if e is None:
+                    e = {}
+                    ents.append(e)
+                provider = e.get("provider") or "custom"
+                e.setdefault("format", "openai")
+                newkey = f"{provider}/{model}"
+                if e.get("model") != model or e.get("key") != newkey:
+                    diffs.append(f"  customModels[{newkey}].model: "
+                                 f"{e.get('model')!r} -> {model!r}")
+                    e["model"] = model
+                    e["key"] = newkey
+                    e["displayName"] = f"{provider} {model}"
+                    dirty = True
+                if d.get("model") != newkey:
+                    diffs.append(f"  model: {d.get('model')!r} -> {newkey!r}")
+                    d["model"] = newkey
+                    dirty = True
+        e = self._active(d)
+        if e is not None:
+            if "base_url" in relevant and e.get("baseURL") != relevant["base_url"]:
+                diffs.append(f"  customModels.baseURL: {e.get('baseURL')!r} -> "
+                             f"{relevant['base_url']!r}")
+                e["baseURL"] = relevant["base_url"]
+                dirty = True
+            if "api_key" in relevant:
+                m = self._ENVREF.match(e.get("apiKey") or "")
+                if m:
+                    var = m.group(1)
+                    cur = self._env_value(var)
+                    if cur != relevant["api_key"]:
+                        diffs.append(f"  env {var}: {config.redact(cur)!r} -> "
+                                     f"{config.redact(relevant['api_key'])!r}")
+                        if not dry:
+                            from .envrc import ensure_env_var
+                            ensure_env_var(var, relevant["api_key"])
+                elif e.get("apiKey") != relevant["api_key"]:
+                    diffs.append(f"  customModels.apiKey: "
+                                 f"{config.redact(e.get('apiKey'))!r} -> "
+                                 f"{config.redact(relevant['api_key'])!r}")
+                    e["apiKey"] = relevant["api_key"]
+                    dirty = True
+        if dirty and not dry:
+            config.keep_mode_write_json(self.path, d)
+        return diffs
+
+
+@register
+class QoderAdapter(_QoderBase):
+    id = "qoder"
+    name = "Qoder CLI"
+    primary = "qoder.model"
+    path = HOME / ".qoder" / "settings.json"
+
+
+@register
+class QoderCnAdapter(_QoderBase):
+    id = "qodercn"
+    name = "Qoder CLI (CN)"
+    primary = "qodercn.model"
+    path = HOME / ".qoder-cn" / "settings.json"
+
+
+# ─────────────────── AtomCode: config.toml models table ─────────────────
+
+@register
+class AtomCodeAdapter:
+    """AtomCode ~/.atomcode/config.toml: default_model / default_provider /
+    vision_preprocessor_provider all hold the composite id — the key of the
+    [models."<account>-<model>"] table, whose entry.account resolves to
+    [provider_accounts.<account>] for base_url (auth is OAuth in auth.toml,
+    so there is no api_key slot).
+
+    --model reuses an existing entry already serving the target model, else
+    clones the active entry (account / vision / context / effort fields)
+    under a new <account>-<model> key; the three top-level selectors follow
+    (vision only when it currently mirrors the old default)."""
+    id = "atomcode"
+    name = "AtomCode"
+    primary = "atomcode.model"
+    path = HOME / ".atomcode" / "config.toml"
+
+    @property
+    def available(self):
+        return self.path.exists()
+
+    def _doc(self):
+        return tomlh.load_toml_editable(self.path)
+
+    def _account_of(self, models, key):
+        e = models.get(key) if isinstance(models, dict) else None
+        return e.get("account") if isinstance(e, dict) else None
+
+    def slots(self):
+        if not self.available:
+            return []
+        d = self._doc()
+        if d is None:
+            return []
+        cur = d.get("default_model")
+        out = [Slot(key="atomcode.model", label="default_model", current=cur)]
+        models = d.get("models")
+        acct = self._account_of(models, cur) if isinstance(models, dict) else None
+        pa = (d.get("provider_accounts") or {}).get(acct) \
+            if isinstance(d.get("provider_accounts"), dict) else None
+        if isinstance(pa, dict):
+            out.append(Slot(key="atomcode.base_url",
+                            label=f"provider_accounts.{acct}.base_url",
+                            current=pa.get("base_url"), kind=KIND_BASE_URL))
+        return out
+
+    def apply(self, assignments, dry=False):
+        relevant = {k[len("atomcode."):]: v for k, v in assignments.items()
+                    if k.startswith("atomcode.")}
+        if not relevant or not self.available:
+            return []
+        d = self._doc()
+        if d is None:
+            return ["  (skip: tomlkit unavailable)"]
+        diffs: list[str] = []
+        dirty = False
+        models = d.get("models")
+        if not isinstance(models, dict):
+            import tomlkit
+            models = d["models"] = tomlkit.table()
+        cur = d.get("default_model")
+        if "model" in relevant:
+            model = relevant["model"]
+            tgt = next((k for k, v in models.items()
+                        if isinstance(v, dict) and v.get("model") == model),
+                       None)
+            if tgt is None:
+                src = models.get(cur) if isinstance(models.get(cur), dict) else None
+                acct = (src or {}).get("account") or "default"
+                tgt = f"{acct}-{model}"
+                if not isinstance(models.get(tgt), dict):
+                    import tomlkit
+                    e = tomlkit.table()
+                    if src is not None:
+                        for f in ("account", "supports_vision",
+                                  "context_window",
+                                  "reasoning_effort_levels"):
+                            if f in src:
+                                e[f] = src[f]
+                    else:
+                        e["account"] = acct
+                    e["model"] = model
+                    models[tgt] = e
+                    diffs.append(f"  models.{tgt}: (created from {cur!r})")
+            if d.get("default_model") != tgt or d.get("default_provider") != tgt:
+                diffs.append(f"  default_model/default_provider: {cur!r} -> {tgt!r}")
+                d["default_model"] = tgt
+                d["default_provider"] = tgt
+                dirty = True
+            vis = d.get("vision_preprocessor_provider")
+            if vis == cur and vis != tgt:  # only follow a mirrored value
+                diffs.append(f"  vision_preprocessor_provider: {vis!r} -> {tgt!r}")
+                d["vision_preprocessor_provider"] = tgt
+                dirty = True
+        if "base_url" in relevant:
+            acct = self._account_of(models, d.get("default_model")) or "default"
+            pa = (d.get("provider_accounts") or {}).get(acct) \
+                if isinstance(d.get("provider_accounts"), dict) else None
+            if pa is None:
+                import tomlkit
+                pa = tomlkit.table()
+                pa["provider"] = "openai"
+                d.setdefault("provider_accounts", tomlkit.table())[acct] = pa
+            if pa.get("base_url") != relevant["base_url"]:
+                diffs.append(f"  provider_accounts.{acct}.base_url: "
+                             f"{pa.get('base_url')!r} -> {relevant['base_url']!r}")
+                pa["base_url"] = relevant["base_url"]
+                dirty = True
+        if dirty and not dry:
+            config.write_text_atomic(self.path, tomlh.dump_toml(d))
+        return diffs
+
+
+# ─────────────────── Amp: AMP_URL / AMP_API_KEY env ─────────────────────
+
+@register
+class AmpAdapter:
+    """Amp (Sourcegraph) CLI. Model routing is server-side: The Dial modes
+    and BYOK routers (`amp config model-providers`, itself login/proxy
+    managed) live in the Amp cloud, so there is no local model slot — the
+    primary key amp.model is deliberately unbound and `--model` sweeps skip
+    this adapter. What the CLI does read locally are the documented env vars
+    AMP_URL (self-hosted Amp service base) and AMP_API_KEY (access token),
+    persisted in the shell rc."""
+    id = "amp"
+    name = "Amp"
+    primary = "amp.model"  # unbound on purpose
+    path = config.SHELL_RC
+    _ENV = {"amp.base_url": "AMP_URL", "amp.api_key": "AMP_API_KEY"}
+
+    @property
+    def available(self):
+        return (HOME / ".config" / "amp").exists()
+
+    def _env_value(self, var):
+        if config.OS_NAME != "windows" and config.SHELL_RC is not None \
+                and config.SHELL_RC.exists():
+            from .envrc import _read_vars
+            return _read_vars(config.SHELL_RC, {var}).get(var)
+        return os.environ.get(var)
+
+    def slots(self):
+        if not self.available or self.path is None and \
+                config.OS_NAME != "windows":
+            return []
+        out = []
+        for key, var in self._ENV.items():
+            out.append(Slot(key=key, label=f"env {var}",
+                            current=self._env_value(var),
+                            kind=KIND_BASE_URL if key.endswith("base_url")
+                            else KIND_API_KEY))
+        return out
+
+    def probe(self, timeout=8):
+        """amp service is not an OpenAI-style endpoint — skip the probe."""
+        return ("SKIP", "amp service API, not OpenAI-probeable "
+                "(model routing is cloud-side)")
+
+    def apply(self, assignments, dry=False):
+        relevant = {k[len("amp."):]: v for k, v in assignments.items()
+                    if k.startswith("amp.") and k != "amp.model"}
+        if not relevant or not self.available:
+            return []
+        diffs: list[str] = []
+        for full, var in self._ENV.items():
+            if full[len("amp."):] not in relevant:
+                continue
+            val = relevant[full[len("amp."):]]
+            old = self._env_value(var)
+            if old == val:
+                continue
+            diffs.append(f"  env {var}: {config.redact(old)!r} -> "
+                         f"{config.redact(val)!r}")
+            if not dry:
+                from .envrc import ensure_env_var
+                ensure_env_var(var, val)
+        return diffs
+
+
+# ───────── Muse / Antigravity: flat settings.json adapters ──────────────
+
+@register
+class MuseAdapter:
+    """Muse ~/.config/muse/settings.json: flat schema. `provider` is
+    echo|meta|local (verified by probing the CLI's unknown-member checker),
+    `model` is the id for non-echo providers. ccse only writes these two
+    verified keys — muse names unknown top-level members at startup."""
+    id = "muse"
+    name = "Muse"
+    primary = "muse.model"
+    path = HOME / ".config" / "muse" / "settings.json"
+    model_raw = True
+
+    @property
+    def available(self):
+        return self.path.exists()
+
+    def slots(self):
+        if not self.available:
+            return []
+        d = config.load_json(self.path) or {}
+        return [Slot(key="muse.model", label="model", current=d.get("model")),
+                Slot(key="muse.provider", label="provider (echo|meta|local)",
+                     current=d.get("provider"))]
+
+    def apply(self, assignments, dry=False):
+        relevant = {k[len("muse."):]: v for k, v in assignments.items()
+                    if k.startswith("muse.")}
+        if not relevant or not self.available:
+            return []
+        d = config.load_json(self.path) or {}
+        diffs: list[str] = []
+        dirty = False
+        for key in ("model", "provider"):
+            if key in relevant and d.get(key) != relevant[key]:
+                diffs.append(f"  {key}: {d.get(key)!r} -> {relevant[key]!r}")
+                d[key] = relevant[key]
+                dirty = True
+        if dirty and not dry:
+            config.keep_mode_write_json(self.path, d)
+        return diffs
+
+
+@register
+class AgyAdapter:
+    """Antigravity CLI ~/.gemini/antigravity-cli/settings.json: top-level
+    `model` (model id), `modelProvider` (backend selector — removing it
+    falls back to the sign-in backend), `baseURL` (custom endpoint; API-key
+    auth is env-managed, e.g. GEMINI_API_KEY, so no api_key slot). Minimal
+    surface: only these top-level keys, no models.list surgery."""
+    id = "agy"
+    name = "Antigravity CLI"
+    primary = "agy.model"
+    path = HOME / ".gemini" / "antigravity-cli" / "settings.json"
+    model_raw = True
+
+    @property
+    def available(self):
+        return self.path.exists()
+
+    def slots(self):
+        if not self.available:
+            return []
+        d = config.load_json(self.path) or {}
+        return [Slot(key="agy.model", label="model", current=d.get("model")),
+                Slot(key="agy.model_provider", label="modelProvider",
+                     current=d.get("modelProvider")),
+                Slot(key="agy.base_url", label="baseURL",
+                     current=d.get("baseURL"), kind=KIND_BASE_URL)]
+
+    def apply(self, assignments, dry=False):
+        relevant = {k[len("agy."):]: v for k, v in assignments.items()
+                    if k.startswith("agy.")}
+        if not relevant or not self.available:
+            return []
+        d = config.load_json(self.path) or {}
+        diffs: list[str] = []
+        dirty = False
+        for key, field in (("model", "model"),
+                           ("model_provider", "modelProvider"),
+                           ("base_url", "baseURL")):
+            if key in relevant and d.get(field) != relevant[key]:
+                diffs.append(f"  {field}: {d.get(field)!r} -> {relevant[key]!r}")
+                d[field] = relevant[key]
+                dirty = True
         if dirty and not dry:
             config.keep_mode_write_json(self.path, d)
         return diffs

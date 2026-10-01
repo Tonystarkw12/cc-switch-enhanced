@@ -157,6 +157,11 @@ ccse profiles                 # 列已有 profile
 | `forge` | `~/.forge/.forge.toml` | TOML | `[session].model_id`（自动 `merge_system_messages=true`） | — | — |
 | `crush` | `~/.config/crush/crush.json` + `~/.local/share/crush/providers.json` | JSON | `models.large`（crush.json 顶层选择，重启不丢；镜像 providers.json 目录） | `providers.<id>.base_url` | `providers.<id>.api_key` |
 | `ante` | `~/.ante/settings.json` | JSON | `model`（裸名）+ `provider`（网关切换时自动落 `openai-compatible`） | `OPENAI_COMPATIBLE_BASE_URL` → ~/.zshrc | `OPENAI_COMPATIBLE_API_KEY` → ~/.zshrc |
+| `qoder` / `qodercn` | `~/.qoder/settings.json`、`~/.qoder-cn/settings.json` | JSON | `model`（选 `customModels[].key` 组合 id；裸名复用已有条目或就地改写活动条目） | 活动 `customModels[].baseURL` | 活动 `customModels[].apiKey`（`$VAR` 引用保值写 ~/.zshrc） |
+| `atomcode` | `~/.atomcode/config.toml` | TOML | `default_model`+`default_provider`（`<account>-<model>` 组合键，裸名复用已有条目或克隆活动条目；`vision_preprocessor_provider` 镜像跟随） | 活动 `provider_accounts.<acct>.base_url` | —（OAuth in auth.toml） |
+| `amp` | env（无模型槽） | env | —（模型路由在 Amp 云端：The Dial + BYOK router；`amp.model` 故意不绑定，`--model` 扫描自动跳过） | `AMP_URL` → ~/.zshrc（自托管服务地址） | `AMP_API_KEY` → ~/.zshrc |
+| `muse` | `~/.config/muse/settings.json` | JSON | `model`（裸名；provider echo\|meta\|local 时生效） | — | — |
+| `agy` | `~/.gemini/antigravity-cli/settings.json` | JSON | `model`（顶层裸名） | `baseURL`（顶层；key 走 GEMINI_API_KEY env） | — |
 | `droid` | `~/.factory/settings.json` | JSON | `sessionDefaultSettings.model`（裸名自动解析/新建 `customModels[]` 条目 → `custom:<name>-N` id） | 活动 `customModels[].baseUrl` | 活动 `customModels[].apiKey` |
 | `hermes` | `~/.hermes/config.yaml` | YAML | `model.default` | `model.base_url` | `model.api_key` |
 | `omp` | `~/.omp/agent/config.yml` | YAML | `llm.model` + `defaultModel` + `modelRoles.default`（保 `provider/` 前缀和 `:level`） | `llm.baseUrl` | `llm.apiKey` 的 `${ENV_VAR}` → ~/.zshrc / setx |
@@ -278,7 +283,7 @@ pipx/uv 装一个 CLI，stdlib（`argparse`/`tomllib`/`json`/`urllib`）为主�
 
 **ROADMAP**
 
-- [x] 32 adapter（claude/codex/opencode/gemini/qwen/cline + codebuddy/pi/openclaw/kilocode/reasonix/grok/forge/hermes/snow/crush/droid/ante/memmy/prime/omp/openakita/jcode + openhands/commandcode/mmx/aider/pigo/penguin + kimi/copaw/nvim envrc）
+- [x] 38 adapter（claude/codex/opencode/gemini/qwen/cline + codebuddy/pi/openclaw/kilocode/reasonix/grok/forge/hermes/snow/crush/droid/ante/qoder/qodercn/atomcode/amp/muse/agy/memmy/prime/omp/openakita/jcode + openhands/commandcode/mmx/aider/pigo/penguin + kimi/copaw/nvim envrc）
 - [x] `--model NAME` 全量一键 + **subagent 跟随** + `--only`/`--exclude` + 保前缀 + claude 自动 `[1M]`
 - [x] `--base-url` / `--api-key` 全量一键（env 型写 ~/.zshrc、env_key 解析、codex 字面 api_key）
 - [x] `apply`/`diff` 双模式 + profile 多槽位 + `genprofile` 快照成 profile

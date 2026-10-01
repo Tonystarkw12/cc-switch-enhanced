@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -22,7 +23,8 @@ def test_registry_loads_all_targets():
                    "grok", "forge", "hermes", "snow", "crush", "droid",
                    "memmy", "prime", "omp", "kilo", "openakita", "jcode",
                    "dsh", "openclaude", "openhands", "commandcode", "mmx",
-                   "aider", "pigo", "penguin", "ante"):
+                   "aider", "pigo", "penguin", "ante", "qoder", "qodercn",
+                   "atomcode", "amp", "muse", "agy"):
         assert expect in ids, f"missing adapter {expect}"
 
 
@@ -1196,6 +1198,178 @@ def test_ante_adapter(tmp_path, monkeypatch):
                    "ante.base_url": "http://x"}, dry=False)
     assert not any("provider" in x for x in out)
     assert json.loads(settings.read_text())["provider"] == "zai"
+
+
+def test_qoder_adapter(tmp_path, monkeypatch):
+    """qoder: settings.json `model` selects customModels[] by composite key;
+    --model reuses an existing entry or rewrites the active one in place;
+    $ENV_REF apiKey persists the value into the shell rc."""
+    from ccse import extra as extra_mod
+    from ccse import envrc as envrc_mod
+    cfg = tmp_path / "settings.json"
+    cfg.write_text(json.dumps({
+        "model": "newapi/gpt-5.6-terra",
+        "customModels": [{"provider": "newapi", "model": "gpt-5.6-terra",
+                          "key": "newapi/gpt-5.6-terra",
+                          "displayName": "NewAPI GPT-5.6 Terra",
+                          "format": "openai", "isReasoning": True,
+                          "baseURL": "$OPENAI_BASE_URL",
+                          "apiKey": "$OPENAI_API_KEY"}]}))
+    rc = tmp_path / "zshrc"
+    rc.write_text("export OPENAI_API_KEY='sk-old'\n")
+
+    monkeypatch.setattr(extra_mod, "HOME", tmp_path, raising=False)
+    cls = type("_QoderTest", (extra_mod.QoderAdapter,), {
+        "path": cfg, "available": property(lambda self: True)})
+    monkeypatch.setattr(config, "SHELL_RC", rc)
+    monkeypatch.setitem(os.environ, "OPENAI_BASE_URL", "http://gw:6333/v1")
+
+    a = cls()
+    slots = a.slots()
+    assert [s.current for s in slots] == ["newapi/gpt-5.6-terra",
+                                          "$OPENAI_BASE_URL", "$OPENAI_API_KEY"]
+    # reuse: an entry already serving glm-5.2 doesn't exist → rewrite active
+    diffs = a.apply({"qoder.model": "glm-5.2",
+                     "qoder.api_key": "sk-new"}, dry=True)
+    assert len(diffs) == 3 and "customModels[newapi/glm-5.2].model" in diffs[0]
+    assert json.loads(cfg.read_text())["model"] == "newapi/gpt-5.6-terra"
+
+    a.apply({"qoder.model": "glm-5.2", "qoder.api_key": "sk-new"}, dry=False)
+    d = json.loads(cfg.read_text())
+    assert d["model"] == "newapi/glm-5.2"
+    e = d["customModels"][0]
+    assert e["model"] == "glm-5.2" and e["key"] == "newapi/glm-5.2"
+    assert e["baseURL"] == "$OPENAI_BASE_URL"          # ref preserved
+    assert e["isReasoning"] is True                    # untouched
+    assert envrc_mod._read_vars(rc, {"OPENAI_API_KEY"}) == {
+        "OPENAI_API_KEY": "sk-new"}
+    assert a.slots()[0].current == "newapi/glm-5.2"
+    assert a.apply({"qoder.model": "glm-5.2",
+                    "qoder.api_key": "sk-new"}, dry=False) == []
+    # a bare-model entry created with no active entry gets format/provider
+    cfg2 = tmp_path / "s2.json"
+    cfg2.write_text("{}")
+    b = type("_QoderTest2", (extra_mod.QoderAdapter,), {
+        "path": cfg2, "available": property(lambda self: True)})()
+    b.apply({"qoder.model": "m2"}, dry=False)
+    d2 = json.loads(cfg2.read_text())
+    assert d2["model"] == "custom/m2"
+    assert d2["customModels"][0]["format"] == "openai"
+
+
+def test_atomcode_adapter(tmp_path, monkeypatch):
+    """atomcode: default_model/default_provider/vision hold the composite
+    [models."<account>-<model>"] key; --model reuses an existing entry or
+    clones the active one; base_url targets the active account."""
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+    from ccse import extra as extra_mod, toml as tomlh
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        'default_provider = "AtomGit-qwen3.8-27b"\n'
+        'default_model = "AtomGit-qwen3.8-27b"\n'
+        'vision_preprocessor_provider = "AtomGit-qwen3.8-27b"\n'
+        '\n[provider_accounts.AtomGit]\n'
+        'provider = "openai"\n'
+        'base_url = "https://llm-api.atomgit.com/v1"\n'
+        '\n[models."AtomGit-qwen3.8-27b"]\n'
+        'account = "AtomGit"\n'
+        'model = "qwen3.8-27b"\n'
+        'supports_vision = true\n'
+        'context_window = 262144\n')
+    monkeypatch.setattr(extra_mod, "HOME", tmp_path, raising=False)
+    cls = type("_AtomCodeTest", (extra_mod.AtomCodeAdapter,), {
+        "path": cfg, "available": property(lambda self: True)})
+    a = cls()
+    assert [s.current for s in a.slots()] == [
+        "AtomGit-qwen3.8-27b", "https://llm-api.atomgit.com/v1"]
+
+    # clone-path: no entry serves glm5.3-flash
+    diffs = a.apply({"atomcode.model": "glm5.3-flash"}, dry=True)
+    assert len(diffs) == 3 and "models.AtomGit-glm5.3-flash" in diffs[0]
+    assert a.slots()[0].current == "AtomGit-qwen3.8-27b"  # dry: untouched
+
+    a.apply({"atomcode.model": "glm5.3-flash",
+             "atomcode.base_url": "http://gw:6333/v1"}, dry=False)
+    d = tomlh.load_toml_editable(cfg)
+    assert d["default_model"] == d["default_provider"] == \
+        d["vision_preprocessor_provider"] == "AtomGit-glm5.3-flash"
+    e = d["models"]["AtomGit-glm5.3-flash"]
+    assert e["model"] == "glm5.3-flash" and e["account"] == "AtomGit"
+    assert e["context_window"] == 262144                  # cloned
+    assert d["models"]["AtomGit-qwen3.8-27b"]["model"] == "qwen3.8-27b"  # kept
+    assert d["provider_accounts"]["AtomGit"]["base_url"] == "http://gw:6333/v1"
+    # idempotent re-apply
+    assert a.apply({"atomcode.model": "glm5.3-flash",
+                    "atomcode.base_url": "http://gw:6333/v1"}, dry=False) == []
+
+
+def test_amp_adapter(tmp_path, monkeypatch):
+    """amp: env-only (AMP_URL/AMP_API_KEY in shell rc); no model slot so
+    --model sweeps skip it; probe reports SKIP."""
+    from ccse import extra as extra_mod
+    from ccse import envrc as envrc_mod
+    rc = tmp_path / "zshrc"
+    rc.write_text("export AMP_API_KEY='tok-old'\n")
+    monkeypatch.setattr(extra_mod, "HOME", tmp_path, raising=False)
+    (tmp_path / ".config" / "amp").mkdir(parents=True)
+    cls = type("_AmpTest", (extra_mod.AmpAdapter,), {})
+    monkeypatch.setattr(config, "SHELL_RC", rc)
+    a = cls()
+    slots = a.slots()
+    assert [(s.key, s.current) for s in slots] == [
+        ("amp.base_url", None), ("amp.api_key", "tok-old")]
+    assert a.primary not in {s.key for s in slots}   # sweeps skip amp
+    assert a.probe()[0] == "SKIP"
+    diffs = a.apply({"amp.base_url": "http://192.168.0.14:9000",
+                     "amp.model": "glm-5.2"}, dry=True)
+    assert len(diffs) == 1                           # amp.model ignored
+    assert rc.read_text() == "export AMP_API_KEY='tok-old'\n"  # dry: untouched
+    a.apply({"amp.base_url": "http://192.168.0.14:9000",
+             "amp.api_key": "tok-new"}, dry=False)
+    assert envrc_mod._read_vars(rc, {"AMP_URL", "AMP_API_KEY"}) == {
+        "AMP_URL": "http://192.168.0.14:9000", "AMP_API_KEY": "tok-new"}
+    assert a.apply({"amp.base_url": "http://192.168.0.14:9000",
+                    "amp.api_key": "tok-new"}, dry=False) == []
+
+
+def test_muse_and_agy_adapters(tmp_path, monkeypatch):
+    """muse: flat settings.json (model/provider only). agy: top-level
+    model/modelProvider/baseURL; other members preserved."""
+    from ccse import extra as extra_mod
+    muse = tmp_path / "muse.json"
+    muse.write_text(json.dumps({"schema_version": 1,
+                                "tui": {"notice": True}}))
+    agy = tmp_path / "agy.json"
+    agy.write_text(json.dumps({"theme": "dark"}))
+    monkeypatch.setattr(extra_mod, "HOME", tmp_path, raising=False)
+    M = type("_MuseTest", (extra_mod.MuseAdapter,), {
+        "path": muse, "available": property(lambda self: True)})
+    A = type("_AgyTest", (extra_mod.AgyAdapter,), {
+        "path": agy, "available": property(lambda self: True)})
+
+    m = M()
+    diffs = m.apply({"muse.model": "qwen3.8:27b", "muse.provider": "meta"},
+                    dry=True)
+    assert len(diffs) == 2
+    assert json.loads(muse.read_text())["schema_version"] == 1  # dry
+    m.apply({"muse.model": "qwen3.8:27b", "muse.provider": "meta"}, dry=False)
+    d = json.loads(muse.read_text())
+    assert d["model"] == "qwen3.8:27b" and d["provider"] == "meta"
+    assert d["tui"] == {"notice": True}                     # untouched
+    assert m.apply({"muse.model": "qwen3.8:27b",
+                    "muse.provider": "meta"}, dry=False) == []
+
+    a = A()
+    diffs = a.apply({"agy.model": "gemini-3.1-pro", "agy.model_provider":
+                     "custom"}, dry=False)
+    assert len(diffs) == 2
+    d = json.loads(agy.read_text())
+    assert d["model"] == "gemini-3.1-pro" and d["modelProvider"] == "custom"
+    assert d["theme"] == "dark"
+    assert a.slots()[1].current == "custom"
+    assert a.apply({"agy.model": "gemini-3.1-pro",
+                    "agy.model_provider": "custom"}, dry=False) == []
 
 
 def test_prime_dangling_provider_repointed(tmp_path: Path, monkeypatch):

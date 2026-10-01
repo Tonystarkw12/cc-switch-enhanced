@@ -24,7 +24,7 @@ PROFILES_PATH = config.HOME / ".ccse" / "profiles.toml"
 # the shell rc / user env (codex/grok/reasonix/memmy/omp/prime). verify must
 # snapshot that file too.
 _ENV_KEY_ADAPTERS = ("codex", "grok", "reasonix", "memmy", "omp", "prime",
-                     "ante")
+                     "ante", "qoder", "qodercn", "amp")
 
 
 def _load_adapters():
