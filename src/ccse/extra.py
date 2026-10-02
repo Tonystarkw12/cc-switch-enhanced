@@ -17,6 +17,7 @@ import re
 from pathlib import Path
 
 from . import config
+from .envrc import make_envrc_adapter
 from .jsonpath import make_adapter
 from . import toml as tomlh
 from .registry import (KIND_API_KEY, KIND_BASE_URL, KIND_MODEL, Slot, register)
@@ -1717,6 +1718,188 @@ class AgyAdapter:
                 dirty = True
         if dirty and not dry:
             config.keep_mode_write_json(self.path, d)
+        return diffs
+
+
+# ───────────────── Trae CLI: ~/.trae/trae_cli.yaml ──────────────────────
+
+@register
+class TraeCliAdapter:
+    """Trae CLI ~/.trae/trae_cli.yaml (schema verified against `trae-cli
+    models` on the real binary): models[] is the user catalog — entries
+    {name, model, provider, base_url, api_key, context_window?} — and
+    model.name selects the active entry. --model reuses an entry whose
+    name/model matches, else appends a new one cloning the active entry's
+    endpoint (provider defaults openai); --base-url/--api-key rewrite the
+    active entry (api_key stored literally)."""
+    id = "trae"
+    name = "Trae CLI"
+    primary = "trae.model"
+    path = HOME / ".trae" / "trae_cli.yaml"
+    model_raw = True
+
+    @property
+    def available(self):
+        return (HOME / ".trae").exists()
+
+    @staticmethod
+    def _entries(doc):
+        e = doc.get("models") if isinstance(doc, dict) else None
+        return e if isinstance(e, list) else None
+
+    def _active(self, doc):
+        ents = self._entries(doc) or []
+        sel = doc.get("model")
+        sel = sel.get("name") if isinstance(sel, dict) else None
+        if sel:
+            for e in ents:
+                if isinstance(e, dict) and e.get("name") == sel:
+                    return e
+        return next((e for e in ents if isinstance(e, dict)), None)
+
+    def _selection(self, doc):
+        sel = doc.get("model") if isinstance(doc, dict) else None
+        sel = sel.get("name") if isinstance(sel, dict) else None
+        if sel:
+            return sel
+        e = self._active(doc)
+        return e.get("model") if e else None
+
+    def slots(self):
+        if not self.available:
+            return []
+        doc, _ = _load_yaml(self.path)
+        if doc is None:
+            # unconfigured install — expose the model slot so a bare
+            # `--model X` bootstraps the file
+            return [Slot(key="trae.model", label="model.name", current=None)]
+        out = [Slot(key="trae.model", label="model.name",
+                    current=self._selection(doc))]
+        e = self._active(doc)
+        if e is not None:
+            out.append(Slot(key="trae.base_url",
+                            label="active models[].base_url",
+                            current=e.get("base_url"), kind=KIND_BASE_URL))
+            out.append(Slot(key="trae.api_key",
+                            label="active models[].api_key",
+                            current=e.get("api_key"), kind=KIND_API_KEY))
+        return out
+
+    def apply(self, assignments, dry=False):
+        relevant = {k[len("trae."):]: v for k, v in assignments.items()
+                    if k.startswith("trae.")}
+        if not relevant or not self.available:
+            return []
+        doc, y = _load_yaml(self.path)
+        if y is None and doc is not None:
+            return ["  (skip: ruamel.yaml unavailable)"]
+        if doc is None:
+            try:
+                import ruamel.yaml as _ry  # type: ignore
+            except ImportError:
+                return ["  (skip: ruamel.yaml unavailable)"]
+            y = _ry.YAML()
+            y.preserve_quotes = True
+            y.width = 4096
+            doc = {}
+        diffs: list[str] = []
+        ents = self._entries(doc)
+        if ents is None:
+            ents = doc["models"] = []
+        if "model" in relevant:
+            model = relevant["model"]
+            tgt = next((e for e in ents if isinstance(e, dict)
+                        and model in (e.get("model"), e.get("name"))), None)
+            if tgt is None:
+                src = self._active(doc) or {}
+                tgt = {"name": model, "model": model,
+                       "provider": src.get("provider") or "openai"}
+                for f in ("base_url", "api_key", "context_window"):
+                    if src.get(f) is not None:
+                        tgt[f] = src[f]
+                ents.append(tgt)
+                diffs.append(f"  models[{model}]: (created)")
+            cur = doc.get("model")
+            cur = cur.get("name") if isinstance(cur, dict) else None
+            if cur != tgt.get("name"):
+                diffs.append(f"  model.name: {cur!r} -> {tgt.get('name')!r}")
+                if not isinstance(doc.get("model"), dict):
+                    doc["model"] = {}
+                doc["model"]["name"] = tgt.get("name")
+        e = self._active(doc)
+        if e is not None:
+            for key in ("base_url", "api_key"):
+                if key in relevant and e.get(key) != relevant[key]:
+                    diffs.append(f"  models[{e.get('name')}].{key}: "
+                                 f"{config.redact(e.get(key))!r} -> "
+                                 f"{config.redact(relevant[key])!r}")
+                    e[key] = relevant[key]
+        if diffs and not dry:
+            from io import StringIO
+            buf = StringIO()
+            y.dump(doc, buf)
+            config.write_text_atomic(self.path, buf.getvalue())
+        return diffs
+
+
+# ───────────────── Devin / Swival: env + flat TOML ──────────────────────
+
+# Devin CLI: model via DEVIN_MODEL env (the --model flag's own env mapping);
+# model registry itself is account/cloud-side, endpoint/keys are not local.
+make_envrc_adapter("devin", "Devin CLI", {"model": "DEVIN_MODEL"})
+
+
+@register
+class SwivalAdapter:
+    """Swival ~/.config/swival/config.toml (XDG, global tier — project
+    swival.toml untouched): flat keys verified against swival.config
+    CONFIG_KEYS — provider, model, api_key, base_url; [profiles.NAME]
+    sections are passed through untouched."""
+    id = "swival"
+    name = "Swival"
+    primary = "swival.model"
+    path = HOME / ".config" / "swival" / "config.toml"
+    model_raw = True
+
+    @property
+    def available(self):
+        return self.path.exists()
+
+    def slots(self):
+        if not self.available:
+            return []
+        d = tomlh.load_toml_editable(self.path)
+        if d is None:
+            return []
+        out = [Slot(key="swival.model", label="model", current=d.get("model")),
+               Slot(key="swival.provider", label="provider", current=d.get("provider"))]
+        if d.get("base_url"):
+            out.append(Slot(key="swival.base_url", label="base_url",
+                            current=d.get("base_url"), kind=KIND_BASE_URL))
+        if d.get("api_key"):
+            out.append(Slot(key="swival.api_key", label="api_key",
+                            current=d.get("api_key"), kind=KIND_API_KEY))
+        return out
+
+    def apply(self, assignments, dry=False):
+        relevant = {k[len("swival."):]: v for k, v in assignments.items()
+                    if k.startswith("swival.")}
+        if not relevant or not self.available:
+            return []
+        d = tomlh.load_toml_editable(self.path)
+        if d is None:
+            return ["  (skip: tomlkit unavailable)"]
+        diffs: list[str] = []
+        dirty = False
+        for key in ("model", "provider", "base_url", "api_key"):
+            if key not in relevant or d.get(key) == relevant[key]:
+                continue
+            diffs.append(f"  {key}: {config.redact(d.get(key))!r} -> "
+                         f"{config.redact(relevant[key])!r}")
+            d[key] = relevant[key]
+            dirty = True
+        if dirty and not dry:
+            config.write_text_atomic(self.path, tomlh.dump_toml(d))
         return diffs
 
 

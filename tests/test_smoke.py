@@ -24,7 +24,8 @@ def test_registry_loads_all_targets():
                    "memmy", "prime", "omp", "kilo", "openakita", "jcode",
                    "dsh", "openclaude", "openhands", "commandcode", "mmx",
                    "aider", "pigo", "penguin", "ante", "qoder", "qodercn",
-                   "atomcode", "amp", "muse", "agy"):
+                   "atomcode", "amp", "muse", "agy", "trae", "devin",
+                   "swival"):
         assert expect in ids, f"missing adapter {expect}"
 
 
@@ -1263,7 +1264,7 @@ def test_atomcode_adapter(tmp_path, monkeypatch):
     clones the active one; base_url targets the active account."""
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-    from ccse import extra as extra_mod, toml as tomlh
+    from ccse import extra as extra_mod, registry, toml as tomlh
     cfg = tmp_path / "config.toml"
     cfg.write_text(
         'default_provider = "AtomGit-qwen3.8-27b"\n'
@@ -1370,6 +1371,87 @@ def test_muse_and_agy_adapters(tmp_path, monkeypatch):
     assert a.slots()[1].current == "custom"
     assert a.apply({"agy.model": "gemini-3.1-pro",
                     "agy.model_provider": "custom"}, dry=False) == []
+
+
+def test_trae_cli_adapter(tmp_path, monkeypatch):
+    """trae: ~/.trae/trae_cli.yaml — models[] catalog + model.name active
+    selector; --model reuses an entry or appends one cloning the endpoint."""
+    from ccse import extra as extra_mod
+    (tmp_path / ".trae").mkdir()
+    cfg = tmp_path / "trae_cli.yaml"
+    cfg.write_text(
+        "models:\n"
+        "  - name: probe-a\n"
+        "    model: ma\n"
+        "    provider: openai\n"
+        "    base_url: http://gw:6333/v1\n"
+        "    api_key: sk-1\n"
+        "model:\n"
+        "  name: probe-a\n")
+    monkeypatch.setattr(extra_mod, "HOME", tmp_path, raising=False)
+    cls = type("_TraeTest", (extra_mod.TraeCliAdapter,), {"path": cfg})
+    a = cls()
+    assert [s.current for s in a.slots()] == ["probe-a", "http://gw:6333/v1",
+                                              "sk-1"]
+    # existing entry serves mb? no → appended, clone endpoint
+    diffs = a.apply({"trae.model": "mb"}, dry=True)
+    assert len(diffs) == 2 and "models[mb]: (created)" in diffs[0]
+    assert cfg.read_text().count("- name:") == 1  # dry: untouched
+
+    a.apply({"trae.model": "mb"}, dry=False)
+    doc_text = cfg.read_text()
+    assert "name: mb" in doc_text and "base_url: http://gw:6333/v1" in doc_text
+    assert a.slots()[0].current == "mb"
+    # reuse path: switching back hits the existing probe-a entry
+    assert a.apply({"trae.model": "probe-a"}, dry=False) == ["  model.name: "
+                                                             "'mb' -> 'probe-a'"]
+    assert a.apply({"trae.model": "probe-a"}, dry=False) == []
+    a.apply({"trae.base_url": "http://x:9000/v1"}, dry=False)
+    assert "base_url: http://x:9000/v1" in cfg.read_text()
+
+
+def test_devin_swival_adapters(tmp_path, monkeypatch):
+    """devin: DEVIN_MODEL env in shell rc. swival: flat config.toml keys,
+    [profiles.*] untouched."""
+    from ccse import extra as extra_mod
+    from ccse import envrc as envrc_mod
+    from ccse.registry import REGISTRY
+    rc = tmp_path / "zshrc"
+    rc.write_text("export DEVIN_MODEL='opus'\n")
+    toml = tmp_path / "swival.toml"
+    toml.write_text('provider = "generic"\nmodel = "m1"\n'
+                    '[profiles.fast]\nmodel = "m2"\n')
+    monkeypatch.setattr(extra_mod, "HOME", tmp_path, raising=False)
+    monkeypatch.setattr(config, "SHELL_RC", rc)
+
+    D = type("_DevinTest", (REGISTRY["devin"],), {})
+    d = D()
+    assert d.slots()[0].current == "opus"
+    diffs = d.apply({"devin.model": "sonnet"}, dry=True)
+    assert len(diffs) == 1 and rc.read_text() == "export DEVIN_MODEL='opus'\n"
+    d.apply({"devin.model": "sonnet"}, dry=False)
+    assert envrc_mod._read_vars(rc, {"DEVIN_MODEL"}) == {"DEVIN_MODEL": "sonnet"}
+    assert d.apply({"devin.model": "sonnet"}, dry=False) == []
+
+    S = type("_SwivalTest", (extra_mod.SwivalAdapter,), {"path": toml})
+    s = S()
+    assert s.slots()[0].current == "m1"
+    diffs = s.apply({"swival.model": "glm-5.2",
+                     "swival.base_url": "http://gw:6333/v1",
+                     "swival.api_key": "sk-1"}, dry=True)
+    assert len(diffs) == 3
+    assert "profiles" not in toml.read_text() or "[profiles.fast]" in \
+        toml.read_text()  # dry: untouched
+    s.apply({"swival.model": "glm-5.2",
+             "swival.base_url": "http://gw:6333/v1",
+             "swival.api_key": "sk-1"}, dry=False)
+    from ccse import toml as tomlh
+    dd = tomlh.load_toml_editable(toml)
+    assert dd["model"] == "glm-5.2" and dd["api_key"] == "sk-1"
+    assert dd["profiles"]["fast"]["model"] == "m2"   # untouched
+    assert s.apply({"swival.model": "glm-5.2",
+                    "swival.base_url": "http://gw:6333/v1",
+                    "swival.api_key": "sk-1"}, dry=False) == []
 
 
 def test_prime_dangling_provider_repointed(tmp_path: Path, monkeypatch):

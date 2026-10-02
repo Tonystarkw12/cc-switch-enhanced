@@ -118,7 +118,8 @@ def make_envrc_adapter(
     config.SHELL_RC (posix shell rc); on Windows it is None and values are read
     from / written to the user environment via setx.
     `kinds`: {slot_label: slot_kind} for non-model slots (e.g. api_key)."""
-    file_path = path if path is not None else config.SHELL_RC
+    # None → resolve config.SHELL_RC lazily at call time (test-patchable)
+    file_path = path
     # slot -> env var
     slot2var = var_map
     var2slot = {v: k for k, v in var_map.items()}
@@ -128,6 +129,9 @@ def make_envrc_adapter(
     def _is_windows() -> bool:
         return config.OS_NAME == "windows"
 
+    def _fp():
+        return file_path if file_path is not None else config.SHELL_RC
+
     def slots(self):
         if _is_windows():
             out = []
@@ -136,9 +140,10 @@ def make_envrc_adapter(
                                 current=os.environ.get(var),
                                 kind=slot_kind.get(label, KIND_MODEL)))
             return out
-        if file_path is None or not file_path.exists():
+        fp = _fp()
+        if fp is None or not fp.exists():
             return []
-        found = _read_vars(file_path, set(slot2var.values()))
+        found = _read_vars(fp, set(slot2var.values()))
         out = []
         for label, var in slot2var.items():
             cur = found.get(var)
@@ -167,13 +172,14 @@ def make_envrc_adapter(
                 if not dry:
                     _setx(var, val)
             return diffs
-        if file_path is None or not file_path.exists():
+        fp = _fp()
+        if fp is None or not fp.exists():
             return []
         want_vars = {slot2var[label]: v for label, v in relevant.items()
                      if label in slot2var}
         if not want_vars:
             return []
-        lines = file_path.read_text("utf-8").splitlines()
+        lines = fp.read_text("utf-8").splitlines()
         diffs: list[str] = []
         written: set[str] = set()
         new_lines: list[str] = []
@@ -197,7 +203,7 @@ def make_envrc_adapter(
                 new_lines.append(f"export {var}={_quote(val)}")
                 diffs.append(f"  export {var}: <unset> -> {val!r} (appended)")
         if diffs and not dry:
-            config.write_text_atomic(file_path, "\n".join(new_lines) + "\n")
+            config.write_text_atomic(fp, "\n".join(new_lines) + "\n")
         return diffs
 
     cls = type(

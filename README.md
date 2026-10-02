@@ -162,6 +162,9 @@ ccse profiles                 # 列已有 profile
 | `amp` | env（无模型槽） | env | —（模型路由在 Amp 云端：The Dial + BYOK router；`amp.model` 故意不绑定，`--model` 扫描自动跳过） | `AMP_URL` → ~/.zshrc（自托管服务地址） | `AMP_API_KEY` → ~/.zshrc |
 | `muse` | `~/.config/muse/settings.json` | JSON | `model`（裸名；provider echo\|meta\|local 时生效） | — | — |
 | `agy` | `~/.gemini/antigravity-cli/settings.json` | JSON | `model`（顶层裸名） | `baseURL`（顶层；key 走 GEMINI_API_KEY env） | — |
+| `trae` | `~/.trae/trae_cli.yaml` | YAML | `model.name`（选 `models[]` 目录条目；裸名复用已有条目或追加并克隆活动条目端点） | 活动 `models[].base_url` | 活动 `models[].api_key`（字面 key） |
+| `devin` | `DEVIN_MODEL` env | env | `model`（裸名；模型注册表在云端账号侧） | — | — |
+| `swival` | `~/.config/swival/config.toml` | TOML | `model`（裸名，CONFIG_KEYS 平铺键） | `base_url` | `api_key`（字面 key；`[profiles.*]` 不动） |
 | `droid` | `~/.factory/settings.json` | JSON | `sessionDefaultSettings.model`（裸名自动解析/新建 `customModels[]` 条目 → `custom:<name>-N` id） | 活动 `customModels[].baseUrl` | 活动 `customModels[].apiKey` |
 | `hermes` | `~/.hermes/config.yaml` | YAML | `model.default` | `model.base_url` | `model.api_key` |
 | `omp` | `~/.omp/agent/config.yml` | YAML | `llm.model` + `defaultModel` + `modelRoles.default`（保 `provider/` 前缀和 `:level`） | `llm.baseUrl` | `llm.apiKey` 的 `${ENV_VAR}` → ~/.zshrc / setx |
@@ -283,7 +286,7 @@ pipx/uv 装一个 CLI，stdlib（`argparse`/`tomllib`/`json`/`urllib`）为主�
 
 **ROADMAP**
 
-- [x] 38 adapter（claude/codex/opencode/gemini/qwen/cline + codebuddy/pi/openclaw/kilocode/reasonix/grok/forge/hermes/snow/crush/droid/ante/qoder/qodercn/atomcode/amp/muse/agy/memmy/prime/omp/openakita/jcode + openhands/commandcode/mmx/aider/pigo/penguin + kimi/copaw/nvim envrc）
+- [x] 41 adapter（claude/codex/opencode/gemini/qwen/cline + codebuddy/pi/openclaw/kilocode/reasonix/grok/forge/hermes/snow/crush/droid/ante/qoder/qodercn/atomcode/amp/muse/agy/trae/devin/swival/memmy/prime/omp/openakita/jcode + openhands/commandcode/mmx/aider/pigo/penguin + kimi/copaw/nvim envrc）
 - [x] `--model NAME` 全量一键 + **subagent 跟随** + `--only`/`--exclude` + 保前缀 + claude 自动 `[1M]`
 - [x] `--base-url` / `--api-key` 全量一键（env 型写 ~/.zshrc、env_key 解析、codex 字面 api_key）
 - [x] `apply`/`diff` 双模式 + profile 多槽位 + `genprofile` 快照成 profile
