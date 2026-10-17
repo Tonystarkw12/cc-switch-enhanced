@@ -33,6 +33,9 @@ class PrimeAdapter:
     # recentModels is updated as a side effect of defaultModel in apply()
     follow = ()
     path = config.HOME / ".prime" / "agent" / "settings.json"
+    # apply() also rewrites MODELS_JSON; snapshot it so `ccse undo` restores the
+    # endpoint and key, not just the model selection.
+    snapshot_paths = (MODELS_JSON,)
 
     @property
     def available(self) -> bool:

@@ -67,6 +67,7 @@ INSTRUCTION_FILES: dict[str, Path] = {
     "droid":      HOME / ".factory" / "AGENTS.md",
     "forge":      HOME / ".forge" / "AGENTS.md",
     "prime":      HOME / ".prime" / "AGENTS.md",
+    "mu":         HOME / ".mu" / "AGENTS.md",
     "memmy":      HOME / ".memmy" / "AGENTS.md",
     "codebuddy":  HOME / ".codebuddy" / "AGENTS.md",
     "pi":         HOME / ".pi" / "AGENTS.md",

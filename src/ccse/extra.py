@@ -1630,6 +1630,204 @@ class AmpAdapter:
         return diffs
 
 
+# ────────────── Step Code: settings.json + models.json ──────────────────
+
+@register
+class StepAdapter:
+    """Step Code (StepFun) ~/.stepcode/. Model selection lives in
+    agent/settings.json `defaultModel` ("provider/id" pattern, schema read
+    from the binary); custom endpoints live in agent/models.json
+    {providers: {<id>: {baseUrl, api, apiKey, models: [{id}]}}} (official
+    docs). --model reuses the provider of the current defaultModel, ensures
+    a model entry, and selects "provider/model"; --base-url/--api-key target
+    that provider (api defaults openai-completions). auth.json (0600 OAuth)
+    is never touched."""
+    id = "step"
+    name = "Step Code"
+    primary = "step.model"
+    path = HOME / ".stepcode" / "agent" / "settings.json"
+    model_raw = True
+
+    @property
+    def available(self):
+        return (HOME / ".stepcode").exists()
+
+    @property
+    def _models_path(self):
+        return HOME / ".stepcode" / "agent" / "models.json"
+
+    @staticmethod
+    def _provider_of(default_model):
+        if isinstance(default_model, str) and "/" in default_model:
+            return default_model.split("/", 1)[0]
+        return "custom"
+
+    def slots(self):
+        if not self.available:
+            return []
+        d = config.load_json(self.path) or {}
+        out = [Slot(key="step.model", label="defaultModel",
+                    current=d.get("defaultModel"))]
+        p = config.load_json(self._models_path) or {}
+        provs = p.get("providers") if isinstance(p, dict) else None
+        entry = (provs or {}).get(self._provider_of(d.get("defaultModel"))) \
+            if isinstance(provs, dict) else None
+        if isinstance(entry, dict):
+            base, key = entry.get("baseUrl"), entry.get("apiKey")
+        else:
+            # unconfigured provider — expose endpoint slots so --base-url/
+            # --api-key bootstrap models.json
+            base = key = None
+        out.append(Slot(key="step.base_url", label="provider.baseUrl",
+                        current=base, kind=KIND_BASE_URL))
+        out.append(Slot(key="step.api_key", label="provider.apiKey",
+                        current=key, kind=KIND_API_KEY))
+        return out
+
+    def apply(self, assignments, dry=False):
+        relevant = {k[len("step."):]: v for k, v in assignments.items()
+                    if k.startswith("step.")}
+        if not relevant or not self.available:
+            return []
+        s = config.load_json(self.path) or {}
+        diffs: list[str] = []
+        dirty = False
+        if "model" in relevant:
+            model = relevant["model"]
+            pid = self._provider_of(s.get("defaultModel"))
+            if s.get("defaultModel") != f"{pid}/{model}":
+                diffs.append(f"  defaultModel: {s.get('defaultModel')!r} -> "
+                             f"'{pid}/{model}'")
+                s["defaultModel"] = f"{pid}/{model}"
+                dirty = True
+        else:
+            pid = self._provider_of(s.get("defaultModel"))
+        p = config.load_json(self._models_path) or {}
+        provs = p.setdefault("providers", {})
+        entry = provs.get(pid) if isinstance(provs, dict) else None
+        created = entry is None
+        if created:
+            entry = {"baseUrl": "", "api": "openai-completions",
+                     "apiKey": "", "models": []}
+            provs[pid] = entry
+            diffs.append(f"  providers.{pid}: (created)")
+        mdirty = False
+        for key, field in (("base_url", "baseUrl"), ("api_key", "apiKey")):
+            if key in relevant and entry.get(field) != relevant[key]:
+                diffs.append(f"  providers.{pid}.{field}: "
+                             f"{config.redact(entry.get(field))!r} -> "
+                             f"{config.redact(relevant[key])!r}")
+                entry[field] = relevant[key]
+                mdirty = True
+        if "model" in relevant:
+            models = entry.get("models")
+            if not isinstance(models, list):
+                models = entry["models"] = []
+            if not any(isinstance(x, dict) and x.get("id") == relevant["model"]
+                       for x in models):
+                models.append({"id": relevant["model"]})
+                diffs.append(f"  providers.{pid}.models[{relevant['model']!r}]: "
+                             "(created)")
+                mdirty = True
+        if not dry:
+            if dirty:
+                config.keep_mode_write_json(self.path, s)
+            if (mdirty or created) and p.get("providers"):
+                config.keep_mode_write_json(self._models_path, p)
+        return diffs
+
+
+# ─────────────────── Ark CLI: config.yaml profiles ──────────────────────
+
+@register
+class ArkcliAdapter:
+    """Volcano Ark CLI ~/.arkcli/config.yaml: the per-invocation --model
+    defaults to the active profile's Resources.Text.Default — verified via
+    struct tags yaml:"resources"/"text"/"default" and the literal read path
+    `resources.text.default` in the binary. --model writes
+    profiles.<default_profile>.resources.text.default; --base-url rewrites
+    that profile's base_url. API keys live in the CLI's identity store
+    (`arkcli profile apikey`), not this file — no api_key slot."""
+    id = "arkcli"
+    name = "Ark CLI"
+    primary = "arkcli.model"
+    path = HOME / ".arkcli" / "config.yaml"
+    model_raw = True
+
+    @property
+    def available(self):
+        return self.path.exists()
+
+    @staticmethod
+    def _profile(doc):
+        profs = doc.get("profiles")
+        if not isinstance(profs, dict) or not profs:
+            return None, None
+        name = doc.get("default_profile")
+        if name not in profs:
+            name = next(iter(profs))
+        p = profs.get(name)
+        return name, p if isinstance(p, dict) else None
+
+    def slots(self):
+        if not self.available:
+            return []
+        doc, _ = _load_yaml(self.path)
+        if doc is None:
+            return []
+        name, p = self._profile(doc)
+        if p is None:
+            return [Slot(key="arkcli.model", label="resources.text.default",
+                         current=None)]
+        res = p.get("resources") or {}
+        txt = res.get("text") if isinstance(res, dict) else None
+        cur = txt.get("default") if isinstance(txt, dict) else None
+        out = [Slot(key="arkcli.model", label="resources.text.default",
+                    current=cur)]
+        if p.get("base_url"):
+            out.append(Slot(key="arkcli.base_url",
+                            label=f"profiles.{name}.base_url",
+                            current=p.get("base_url"), kind=KIND_BASE_URL))
+        return out
+
+    def apply(self, assignments, dry=False):
+        relevant = {k[len("arkcli."):]: v for k, v in assignments.items()
+                    if k.startswith("arkcli.")}
+        if not relevant or not self.available:
+            return []
+        doc, y = _load_yaml(self.path)
+        if y is None:
+            return ["  (skip: ruamel.yaml unavailable)"]
+        name, p = self._profile(doc) if doc is not None else (None, None)
+        if p is None:
+            return ["  (skip: no profile — run `arkcli config init` first)"]
+        diffs: list[str] = []
+        dirty = False
+        if "model" in relevant:
+            res = p.get("resources")
+            if not isinstance(res, dict):
+                res = p["resources"] = {}
+            txt = res.get("text")
+            if not isinstance(txt, dict):
+                txt = res["text"] = {}
+            if txt.get("default") != relevant["model"]:
+                diffs.append(f"  profiles.{name}.resources.text.default: "
+                             f"{txt.get('default')!r} -> {relevant['model']!r}")
+                txt["default"] = relevant["model"]
+                dirty = True
+        if "base_url" in relevant and p.get("base_url") != relevant["base_url"]:
+            diffs.append(f"  profiles.{name}.base_url: {p.get('base_url')!r} "
+                         f"-> {relevant['base_url']!r}")
+            p["base_url"] = relevant["base_url"]
+            dirty = True
+        if dirty and not dry:
+            from io import StringIO
+            buf = StringIO()
+            y.dump(doc, buf)
+            config.write_text_atomic(self.path, buf.getvalue())
+        return diffs
+
+
 # ───────── Muse / Antigravity: flat settings.json adapters ──────────────
 
 @register
@@ -2318,4 +2516,231 @@ class MemmyAdapter:
             y.dump(doc, buf)
             config.write_text_atomic(self.path, buf.getvalue())
         return diffs
+
+
+# ────────────── dotenv (.env) project adapters ──────────────
+
+def _dotenv_read(path: Path) -> dict[str, str]:
+    """Parse KEY=VALUE lines; comments, blanks and other lines ignored."""
+    vals: dict[str, str] = {}
+    if path is None or not path.exists():
+        return vals
+    for line in path.read_text("utf-8").splitlines():
+        s = line.strip()
+        if not s or s.startswith("#") or "=" not in s:
+            continue
+        k, _, v = s.partition("=")
+        vals[k.strip()] = v.strip().strip('"').strip("'")
+    return vals
+
+
+def _dotenv_apply(path: Path, updates: dict[str, str], dry: bool) -> list[str]:
+    """Line-level KEY=VALUE rewrite: replaces matching lines in place,
+    appends missing keys, preserves comments and order (same approach as
+    NMRagent's own admin console). Values are redacted in diffs; write is
+    atomic and keeps the file mode."""
+    text = path.read_text("utf-8") if path.exists() else ""
+    diffs: list[str] = []
+    new_lines: list[str] = []
+    seen: set[str] = set()
+    for line in text.splitlines():
+        m = re.match(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$", line)
+        if m and m.group(1) in updates and m.group(1) not in seen:
+            var = m.group(1)
+            seen.add(var)
+            old = m.group(2).strip().strip('"').strip("'")
+            new = updates[var]
+            if old != new:
+                diffs.append(f"  {var}: {config.redact(old)!r} -> "
+                             f"{config.redact(new)!r}")
+                new_lines.append(f"{var}={new}")
+                continue
+        new_lines.append(line)
+    for var, new in updates.items():
+        if var not in seen:
+            diffs.append(f"  {var}: <unset> -> {config.redact(new)!r}")
+            new_lines.append(f"{var}={new}")
+    if diffs and not dry:
+        out = "\n".join(new_lines)
+        if text.endswith("\n") or not text:
+            out += "\n"
+        config.write_text_atomic(path, out)
+    return diffs
+
+
+@register
+class NMRagentAdapter:
+    """tony's NMRagent pulse-program service (/home/tony/NMRagent): the
+    backend reads its LLM config from backend/.env (python-dotenv) —
+    OPENAI_MODEL / OPENAI_BASE_URL / OPENAI_API_KEY. The client is always an
+    Anthropic-compatible Messages API (nmr/llm.py) and strips a trailing /v1
+    itself, so OpenAI-style base URLs work as-is; LLM_PROVIDER is loaded but
+    unused for client selection. QUERY_REWRITER_MODEL /
+    QUERY_REWRITER_FALLBACK_MODEL are pinned fast rewrite models — exposed
+    as separate (non-following) model slots; empty means "use the generation
+    model". The running service reads env at import — restart it to pick up
+    changes."""
+    id = "nmragent"
+    name = "NMRagent"
+    primary = "nmragent.model"
+    path = Path("/home/tony/NMRagent/backend/.env")
+    model_raw = True
+    _KEYS = {
+        "model": "OPENAI_MODEL",
+        "base_url": "OPENAI_BASE_URL",
+        "api_key": "OPENAI_API_KEY",
+        "rewriter.model": "QUERY_REWRITER_MODEL",
+        "rewriter.fallback": "QUERY_REWRITER_FALLBACK_MODEL",
+    }
+
+    @property
+    def available(self):
+        return self.path.exists()
+
+    def slots(self):
+        if not self.available:
+            return []
+        vals = _dotenv_read(self.path)
+        out = [Slot(key="nmragent.model", label="OPENAI_MODEL",
+                    current=vals.get("OPENAI_MODEL"))]
+        out.append(Slot(key="nmragent.base_url", label="OPENAI_BASE_URL",
+                        current=vals.get("OPENAI_BASE_URL"),
+                        kind=KIND_BASE_URL))
+        out.append(Slot(key="nmragent.api_key", label="OPENAI_API_KEY",
+                        current=vals.get("OPENAI_API_KEY"),
+                        kind=KIND_API_KEY))
+        out.append(Slot(key="nmragent.rewriter.model",
+                        label="QUERY_REWRITER_MODEL",
+                        current=vals.get("QUERY_REWRITER_MODEL")))
+        out.append(Slot(key="nmragent.rewriter.fallback",
+                        label="QUERY_REWRITER_FALLBACK_MODEL",
+                        current=vals.get("QUERY_REWRITER_FALLBACK_MODEL")))
+        return out
+
+    def apply(self, assignments, dry=False):
+        relevant = {k[len("nmragent."):]: v for k, v in assignments.items()
+                    if k.startswith("nmragent.")}
+        updates = {var: relevant[short] for short, var in self._KEYS.items()
+                   if short in relevant}
+        if not updates or not self.available:
+            return []
+        return _dotenv_apply(self.path, updates, dry)
+
+
+@register
+class GraphPulseAdapter:
+    """tony's GraphPulse viewer (/home/tony/graphpulse-master): the vite
+    dev-server AI proxy (/api/ai/complete in vite.config.ts) forwards to
+    `${baseUrl}/chat/completions` on an OpenAI-compatible upstream. Config
+    env (README): NEWAPI_API_BASE | NEWAPI_BASE_URL, NEWAPI_API_KEY,
+    GP_AI_MODEL (server default) and VITE_AI_MODEL (frontend override, sent
+    in the request body and therefore winning over GP_AI_MODEL).
+
+    vite loadEnv reads project-root .env.local but merges process.env on
+    top with highest priority — so when NEWAPI_* is exported in the shell
+    (tony's ~/.zshrc does), the rc file is the effective source and ccse
+    writes there (amp pattern); otherwise the git-ignored .env.local wins
+    and gets the line-level KEY=VALUE rewrite. The proxy checks
+    NEWAPI_API_BASE before NEWAPI_BASE_URL, both in env and in the file —
+    writes target whichever actually configures the value. Restart
+    `npm run dev` to pick up changes."""
+    id = "graphpulse"
+    name = "GraphPulse"
+    primary = "graphpulse.model"
+    path = Path("/home/tony/graphpulse-master/.env.local")
+    model_raw = True
+    _MODEL_KEYS = {"model": "GP_AI_MODEL", "frontend_model": "VITE_AI_MODEL"}
+    _API_KEY_VAR = "NEWAPI_API_KEY"
+    _BASE_URL_KEYS = ("NEWAPI_API_BASE", "NEWAPI_BASE_URL")
+
+    @property
+    def available(self):
+        return self.path.parent.exists()
+
+    def _env_value(self, var):
+        if config.OS_NAME != "windows" and config.SHELL_RC is not None \
+                and config.SHELL_RC.exists():
+            from .envrc import _read_vars
+            return _read_vars(config.SHELL_RC, {var}).get(var)
+        return None
+
+    def _base_url_target(self, vals):
+        """Shell var when the shell configures a base URL (it shadows the
+        file via loadEnv), else None -> write the project .env.local."""
+        for v in self._BASE_URL_KEYS:
+            if os.environ.get(v) is not None or self._env_value(v) is not None:
+                return v
+        return None
+
+    def _base_url_file_key(self, vals):
+        for k in self._BASE_URL_KEYS:
+            if k in vals:
+                return k
+        return self._BASE_URL_KEYS[-1]
+
+    def slots(self):
+        if not self.available:
+            return []
+        vals = _dotenv_read(self.path)
+        out = [Slot(key="graphpulse.model", label="GP_AI_MODEL",
+                    current=vals.get("GP_AI_MODEL"))]
+        out.append(Slot(key="graphpulse.frontend_model",
+                        label="VITE_AI_MODEL",
+                        current=vals.get("VITE_AI_MODEL")))
+        target = self._base_url_target(vals)
+        if target is not None:
+            out.append(Slot(key="graphpulse.base_url", label=f"env {target}",
+                            current=os.environ.get(target)
+                            or self._env_value(target),
+                            kind=KIND_BASE_URL))
+        else:
+            k = self._base_url_file_key(vals)
+            out.append(Slot(key="graphpulse.base_url", label=k,
+                            current=vals.get(k), kind=KIND_BASE_URL))
+        if os.environ.get(self._API_KEY_VAR) is not None or \
+                self._env_value(self._API_KEY_VAR) is not None:
+            out.append(Slot(key="graphpulse.api_key",
+                            label=f"env {self._API_KEY_VAR}",
+                            current=os.environ.get(self._API_KEY_VAR)
+                            or self._env_value(self._API_KEY_VAR),
+                            kind=KIND_API_KEY))
+        else:
+            out.append(Slot(key="graphpulse.api_key",
+                            label=self._API_KEY_VAR,
+                            current=vals.get(self._API_KEY_VAR),
+                            kind=KIND_API_KEY))
+        return out
+
+    def apply(self, assignments, dry=False):
+        relevant = {k[len("graphpulse."):]: v for k, v in assignments.items()
+                    if k.startswith("graphpulse.")}
+        if not relevant or not self.available:
+            return []
+        vals = _dotenv_read(self.path)
+        diffs: list[str] = []
+        file_updates: dict[str, str] = {}
+        for short, val in relevant.items():
+            if short == "base_url":
+                var = self._base_url_target(vals)
+                if var is None:
+                    file_updates[self._base_url_file_key(vals)] = val
+                    continue
+            elif short in self._MODEL_KEYS:
+                file_updates[self._MODEL_KEYS[short]] = val
+                continue
+            else:
+                var = self._API_KEY_VAR
+                if os.environ.get(var) is None and \
+                        self._env_value(var) is None:
+                    file_updates[var] = val
+                    continue
+            old = os.environ.get(var) or self._env_value(var)
+            if old != val:
+                diffs.append(f"  env {var}: {config.redact(old)!r} -> "
+                             f"{config.redact(val)!r}")
+                if not dry:
+                    from .envrc import ensure_env_var
+                    ensure_env_var(var, val)
+        if file_updates:
+            diffs.extend(_dotenv_apply(self.path, file_updates, dry))
         return diffs

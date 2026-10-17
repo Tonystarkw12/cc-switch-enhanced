@@ -5,18 +5,18 @@
 # cc-switch-enhanced
 
 **The fleet-wide model switcher for AI coding agents.**
-一行命令，为 37 个 AI 编程助手同时切换模型 / 中转地址 / API key —— 含 subagent、端点探测与一键回滚。
+一行命令，为 38 个 AI 编程助手同时切换模型 / 中转地址 / API key —— 含 subagent、端点探测与一键回滚。
 
 [![license](https://img.shields.io/badge/license-MIT-blue)](#)
 [![python](https://img.shields.io/badge/python-%E2%89%A53.11-green)](#)
 [![platform](https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20win-lightgrey)](#)
 [![deps](https://img.shields.io/badge/deps-stdlib%20first%20%2B%202-success)](#)
-[![agents](https://img.shields.io/badge/adapters-37-orange)](#)
+[![agents](https://img.shields.io/badge/adapters-38-orange)](#)
 [![docs](https://img.shields.io/badge/docs-DeepWiki-8b5cf6)](https://app.devin.ai/org/xing-ling-ji-zhu/wiki/Tonystarkw12/cc-switch-enhanced?branch=master)
 
 **Why** — 换一个聚合 API（NewAPI / omniroute / 百炼 / 镜像站），模型名、端点、key 全变。GUI 工具适配面窄，手动逐个改配置既慢又易错。`ccse` 把整条切换链路自动化：**改 → 校验 → 可回滚**。
 
-**[快速开始](#tldr)** · **[DeepWiki 文档](https://app.devin.ai/org/xing-ling-ji-zhu/wiki/Tonystarkw12/cc-switch-enhanced?branch=master)** · **[适配列表](#adapter-覆盖37-个)**
+**[快速开始](#tldr)** · **[DeepWiki 文档](https://app.devin.ai/org/xing-ling-ji-zhu/wiki/Tonystarkw12/cc-switch-enhanced?branch=master)** · **[适配列表](#adapter-覆盖38-个)**
 
 </div>
 
@@ -35,7 +35,7 @@
 - [安装](#安装)
 - [`ccse rules` —— 行为注入（caveman + rtk）](#ccse-rules--行为注入caveman--rtk)
 - [profile —— 多槽位配方](#profile--多槽位配方)
-- [adapter 覆盖（37 个）](#adapter-覆盖37-个)
+- [adapter 覆盖（38 个）](#adapter-覆盖38-个)
 - [verify —— 换完确认没改坏](#verify--换完确认没改坏)
 - [rewrite —— 项目内一键切 LLM 配置](#rewrite--项目内一键切-llm-配置)
 - [penv —— 项目 .env 一键换提供商](#penv--项目-env-一键换提供商)
@@ -54,6 +54,7 @@ ccse --model "glm-5.2" --base-url U --api-key K   # 三个一起切
 ccse --model "glm-5.2" --dry            # 只预览，不写盘
 ccse --model "X" --only claude,codex    # 只切某些
 ccse --model "X" --exclude pi,openclaw  # 跳过某些
+ccse --model "X" --no-follow            # 只换主模型，subagent 槽不动
 ccse show                               # 看每个 agent 当前值（★=主槽位）
 ccse verify                             # 换完验证：探测每个端点+模型
 ccse undo                               # 撤回最近一次 apply
@@ -75,7 +76,7 @@ ccse completion zsh > ~/.zfunc/_ccse  # 补全脚本（zsh 需 fpath 含 ~/.zfun
 
 `--json` 输出稳定键名：`list` → `{os, env_file, adapters[]}`；`show` → `{agents[{id, slots[{key,label,kind,current,primary}]}]}`（api_key 脱敏）；`verify` → `{results[], summary{pass,warn,fail,skip}}` 且 fail 时退出码 1；`current` → `{slots_set, best, profiles[{name,matched,total,coverage,exact}]}`。
 
-**`--model` 现在连 subagent 一起换**：opencode 的 `agent.{build,explore,general,plan}`、openclaw 的 subagent、snow 的 basicModel、claude 的 `CLAUDE_CODE_SUBAGENT_MODEL` 都跟着主模型走，各槽保留自己的路由前缀（`newapi/...`、`dmx/...`）。Claude 的 haiku/sonnet/opus 三档默认不动——想统一再单独切。
+**`--model` 现在连 subagent 一起换**：opencode 的 `agent.{build,explore,general,plan}`、openclaw 的 subagent、snow 的 basicModel、claude 的 `CLAUDE_CODE_SUBAGENT_MODEL` 都跟着主模型走，各槽保留自己的路由前缀（`newapi/...`、`dmx/...`）。Claude 的 haiku/sonnet/opus 三档默认不动——想统一再单独切。加 `--no-follow` 只换主模型，所有 subagent/follow 槽保持原值。
 
 ## 安装
 
@@ -104,7 +105,7 @@ ccse rules --rm                     # 移除注入的标记块（还原原文件
 ```
 
 - **幂等**：用 `<!-- ccse:caveman-rtk:START/END -->` 标记块包裹，重跑只更新不重复；`--rm` 干净移除，原文件其余内容不动。
-- **覆盖 22 个**（含 claude → `CLAUDE.md`、gemini → `GEMINI.md`、openakita → `identity/AGENT.md`）；kimi/copaw 纯 env 无指令面，排除。
+- **覆盖 25 个**（含 claude → `CLAUDE.md`、gemini → `GEMINI.md`、openakita → `identity/AGENT.md`、mu → `~/.mu/AGENTS.md`）；kimi/copaw 纯 env 无指令面，排除。
 - ⚠️ **rtk 是指令依赖**：要 agent 真去调 `rtk read/git/...` 而非裸命令。CLI 类、指令跟随好的基本照做；跟随差或不读全局 AGENTS.md 的 agent 无效。caveman 是纯输出风格，跟随率最高。
 
 ## profile —— 多槽位配方
@@ -130,7 +131,7 @@ ccse profiles                 # 列已有 profile
 - `agent.slot = "name"`：`agent` 选 adapter，`slot` 选该 adapter 内字段。
 - profile 里省略的槽位**不动** → 可只切部分 agent。
 
-## adapter 覆盖（37 个）
+## adapter 覆盖（38 个）
 
 **结构化配置**（`--model` 改主槽位 + subagent；`--base-url`/`--api-key` 改对应字段）：
 
@@ -165,6 +166,10 @@ ccse profiles                 # 列已有 profile
 | `trae` | `~/.trae/trae_cli.yaml` | YAML | `model.name`（选 `models[]` 目录条目；裸名复用已有条目或追加并克隆活动条目端点） | 活动 `models[].base_url` | 活动 `models[].api_key`（字面 key） |
 | `devin` | `DEVIN_MODEL` env | env | `model`（裸名；模型注册表在云端账号侧） | — | — |
 | `swival` | `~/.config/swival/config.toml` | TOML | `model`（裸名，CONFIG_KEYS 平铺键） | `base_url` | `api_key`（字面 key；`[profiles.*]` 不动） |
+| `step` | `~/.stepcode/agent/{settings,models}.json` | JSON | `defaultModel`（`provider/id` 复用当前 provider，无则落 `custom/` + 建条目） | `providers.<pid>.baseUrl`（models.json，api 默认 openai-completions） | `providers.<pid>.apiKey`（models.json 字面 key） |
+| `arkcli` | `~/.arkcli/config.yaml` | YAML | `profiles.<default_profile>.resources.text.default`（CLI `--model` 的默认来源；无 profile 则跳过并提示 init） | `profiles.<name>.base_url` | —（key 在 CLI identity store） |
+| `nmragent` | `~/NMRagent/backend/.env` | dotenv | `OPENAI_MODEL`（生成主模型；`QUERY_REWRITER_MODEL`/`QUERY_REWRITER_FALLBACK_MODEL` 为独立非跟随槽位） | `OPENAI_BASE_URL`（客户端自剥 `/v1`，Anthropic 兼容 Messages API） | `OPENAI_API_KEY`（行级 KEY=VALUE 重写，注释/顺序保留；改后需重启服务） |
+| `graphpulse` | `~/graphpulse-master/.env.local` | dotenv | `GP_AI_MODEL`（vite 代理默认；`VITE_AI_MODEL` 前端 override 为独立槽位） | `NEWAPI_API_BASE`（文件里有谁写谁；shell 已 export 则写 `~/.zshrc`——vite loadEnv 里 process.env 优先压过 .env 文件） | `NEWAPI_API_KEY`（同左；vite `/api/ai/complete` 代理上游；改后重启 dev server） |
 | `droid` | `~/.factory/settings.json` | JSON | `sessionDefaultSettings.model`（裸名自动解析/新建 `customModels[]` 条目 → `custom:<name>-N` id） | 活动 `customModels[].baseUrl` | 活动 `customModels[].apiKey` |
 | `hermes` | `~/.hermes/config.yaml` | YAML | `model.default` | `model.base_url` | `model.api_key` |
 | `omp` | `~/.omp/agent/config.yml` | YAML | `llm.model` + `defaultModel` + `modelRoles.default`（保 `provider/` 前缀和 `:level`） | `llm.baseUrl` | `llm.apiKey` 的 `${ENV_VAR}` → ~/.zshrc / setx |
@@ -181,6 +186,7 @@ ccse profiles                 # 列已有 profile
 | `aider` | `~/.aider.conf.yml` | YAML | `model`（裸名自动补 `openai/` 前缀走网关） | `openai-api-base` | `api-key`（`provider=key`） |
 | `mcode` | `~/.minimax/config.yaml` | YAML | `defaultModel`（catalog 解析源；BYO 自动 `custom_provider:` 前缀 + 补条目） | 活动 provider `options.baseURL` | 活动 provider `options.apiKey` |
 | `mimo` | `~/.config/mimocode/mimocode.jsonc` | JSONC | `model`（注释保留的外科手术编辑） | `provider.<active>.options.baseURL` | `provider.<active>.options.apiKey` |
+| `mu` | `~/.mu/agent/settings.json` + `models.json` | JSON | `defaultModel`（配 `defaultProvider` 成对解析；`prov/model` 前缀切 provider，自动修悬空 provider + 同步 `enabledModels` 门控） | `providers.<active>.baseUrl` | `providers.<active>.apiKey`（字面 key） |
 
 **env / shell-rc**（模型名在 `~/.zshrc` 的 `export` 行）：
 
@@ -199,6 +205,8 @@ envrc 适配器只改它声明的那一行 `export VAR=...`（单引号转义，
 > **`[1M]` 后缀**：Claude Code 模型名带聚合端上下文窗口标记（`glm-5.2[1M]`），其它 agent 不需要。`ccse --model "glm-5.2"` 对 claude 自动补 `[1M]`；显式写 `glm-5.2[1M]` 不会叠加。
 
 > **crush / droid 的坑**：crush 会启动时从 Catwalk 重新生成 `providers.json`，外部改动会被覆盖——所以 `--model` 写的是 crush.json 的 `models.large`（持久选择）+ provider `models[]` 声明，providers.json 只做镜像。droid 的模型槽是**组合 id**（如 `custom:GLM-4.7-[GLM-Coding-Plan-China]-0`），`ccse --model <那个 id>` 才命中。
+
+> **mu 的坑**：mu（原 KYRN，pi 系）启动模型是 `settings.json` 里 `defaultProvider` + `defaultModel` **成对**解析的，模型还必须存在于 `models.json` 的 `providers.<defaultProvider>.models` 里；只改一半 mu 会静默回落到"第一个有凭据的 provider"。所以 `--model` 三处一起写（settings 对、provider 悬空则修、catalog 条目同步），并同步 `enabledModels` 门控（用户收窄过 glob 时，不加新 pattern mu 启动就看不到该模型）。`ccse --model bailian/qwen3.6-plus` 前缀命中已配置 provider 时会切 provider，否则斜杠算模型 id 的一部分。`auth.json`（`mu setup`/`/login` 存的凭据）不动。
 
 字段路径支持 JSON-path 选择器：`providers[id=newapi].model`、`providers[newapi].apiModelId`（shorthand 匹配 id/provider/name/key）、`providers.openai-codex-cli.settings.model`。
 
@@ -286,8 +294,8 @@ pipx/uv 装一个 CLI，stdlib（`argparse`/`tomllib`/`json`/`urllib`）为主�
 
 **ROADMAP**
 
-- [x] 41 adapter（claude/codex/opencode/gemini/qwen/cline + codebuddy/pi/openclaw/kilocode/reasonix/grok/forge/hermes/snow/crush/droid/ante/qoder/qodercn/atomcode/amp/muse/agy/trae/devin/swival/memmy/prime/omp/openakita/jcode + openhands/commandcode/mmx/aider/pigo/penguin + kimi/copaw/nvim envrc）
-- [x] `--model NAME` 全量一键 + **subagent 跟随** + `--only`/`--exclude` + 保前缀 + claude 自动 `[1M]`
+- [x] 45 adapter（claude/codex/opencode/gemini/qwen/cline + codebuddy/pi/openclaw/kilocode/reasonix/grok/forge/hermes/snow/crush/droid/ante/qoder/qodercn/atomcode/amp/muse/agy/trae/devin/swival/step/arkcli/nmragent/graphpulse/memmy/prime/omp/openakita/jcode + openhands/commandcode/mmx/aider/pigo/penguin + kimi/copaw/nvim envrc）
+- [x] `--model NAME` 全量一键 + **subagent 跟随**（`--no-follow` 可只换主模型）+ `--only`/`--exclude` + 保前缀 + claude 自动 `[1M]`
 - [x] `--base-url` / `--api-key` 全量一键（env 型写 ~/.zshrc、env_key 解析、codex 字面 api_key）
 - [x] `apply`/`diff` 双模式 + profile 多槽位 + `genprofile` 快照成 profile
 - [x] `undo` / `history` / `snapshots` 撤回链
@@ -305,7 +313,7 @@ pipx/uv 装一个 CLI，stdlib（`argparse`/`tomllib`/`json`/`urllib`）为主�
 
 <div align="center">
 
-**[快速开始](#tldr)** · **[DeepWiki 文档](https://app.devin.ai/org/xing-ling-ji-zhu/wiki/Tonystarkw12/cc-switch-enhanced?branch=master)** · **[适配列表](#adapter-覆盖37-个)** · **[Releases](https://github.com/Tonystarkw12/cc-switch-enhanced/releases)**
+**[快速开始](#tldr)** · **[DeepWiki 文档](https://app.devin.ai/org/xing-ling-ji-zhu/wiki/Tonystarkw12/cc-switch-enhanced?branch=master)** · **[适配列表](#adapter-覆盖38-个)** · **[Releases](https://github.com/Tonystarkw12/cc-switch-enhanced/releases)**
 
 MIT © Tonystarkw12 · 觉得有用给个 ⭐ · [issue](https://github.com/Tonystarkw12/cc-switch-enhanced/issues) / [PR](https://github.com/Tonystarkw12/cc-switch-enhanced/pulls) 欢迎
 

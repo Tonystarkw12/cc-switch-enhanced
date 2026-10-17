@@ -14,18 +14,18 @@ from ccse.registry import all_adapters
 
 
 def test_registry_loads_all_targets():
-    from ccse import claude, cline, codex, gemini, opencode, qwen, prime  # noqa: F401
+    from ccse import claude, cline, codex, gemini, opencode, qwen, prime, mu  # noqa: F401
     from ccse import openakita, jcode, dsh, openclaude, openhands, commandcode, mcode  # noqa: F401
     from ccse import extra  # noqa: F401
     ids = {a.id for a in all_adapters()}
     for expect in ("claude", "codex", "opencode", "gemini", "qwen", "cline",
                    "codebuddy", "pi", "openclaw", "kilocode", "reasonix",
                    "grok", "forge", "hermes", "snow", "crush", "droid",
-                   "memmy", "prime", "omp", "kilo", "openakita", "jcode",
+                   "memmy", "prime", "mu", "omp", "kilo", "openakita", "jcode",
                    "dsh", "openclaude", "openhands", "commandcode", "mmx",
                    "aider", "pigo", "penguin", "ante", "qoder", "qodercn",
                    "atomcode", "amp", "muse", "agy", "trae", "devin",
-                   "swival"):
+                   "swival", "step", "arkcli", "nmragent", "graphpulse"):
         assert expect in ids, f"missing adapter {expect}"
 
 
@@ -792,6 +792,152 @@ def test_prime_adapter(tmp_path, monkeypatch):
     prime_mod.PrimeAdapter.path = config.HOME / ".prime" / "agent" / "settings.json"
 
 
+def _mu_home(tmp_path):
+    """settings.json + models.json in the shape `mu setup` leaves behind."""
+    settings = tmp_path / "settings.json"
+    models = tmp_path / "models.json"
+    settings.write_text(json.dumps({
+        "defaultProvider": "newapi",
+        "defaultModel": "gpt-5.6-terra",
+        "defaultThinkingLevel": "medium",
+    }))
+    models.write_text(json.dumps({"providers": {
+        "newapi": {
+            "baseUrl": "http://a/v1", "api": "openai-completions",
+            "apiKey": "sk-secret-value-0123456789",
+            "models": [{"id": "gpt-5.6-terra", "name": "GPT-5.6 Terra"}],
+        },
+        "bailian": {
+            "baseUrl": "http://b/v1", "api": "openai-completions",
+            "apiKey": "sk-other-key-9876543210",
+            "models": [{"id": "qwen3.6-plus", "name": "Qwen3.6 Plus"}],
+        },
+    }}))
+    return settings, models
+
+
+def test_mu_adapter(tmp_path, monkeypatch):
+    """Mu resolves the model from the settings.defaultProvider/defaultModel pair
+    plus the models.json catalog — not from any env block."""
+    from ccse import mu as mu_mod
+    settings, models = _mu_home(tmp_path)
+    monkeypatch.setattr(mu_mod, "MODELS_JSON", models, raising=False)
+    monkeypatch.setattr(mu_mod, "MuAdapter", mu_mod.MuAdapter, raising=False)
+    mu_mod.MuAdapter.path = settings  # type: ignore[misc]
+    a = mu_mod.MuAdapter()
+    slots = {s.key: s for s in a.slots()}
+    assert slots["mu.default_model"].current == "gpt-5.6-terra"
+    assert slots["mu.default_provider"].current == "newapi"
+    assert slots["mu.base_url"].current == "http://a/v1"
+    assert slots["mu.api_key"].current == "sk-secret-value-0123456789"
+    assert a.primary == "mu.default_model"
+
+    diffs = a.apply({"mu.default_model": "deepseek-v4-flash",
+                     "mu.base_url": "http://b", "mu.api_key": "sk-new-key-abcdefghij"}, dry=False)
+    assert any("defaultModel" in d for d in diffs)
+    assert any("models[0].id" in d for d in diffs)
+    s_after = json.loads(settings.read_text())
+    assert s_after["defaultModel"] == "deepseek-v4-flash"
+    assert s_after["defaultThinkingLevel"] == "medium"  # tier pref untouched
+    m_after = json.loads(models.read_text())["providers"]["newapi"]
+    assert m_after["models"][0]["id"] == "deepseek-v4-flash"
+    assert m_after["models"][0]["name"] == "Deepseek V4 Flash"
+    assert m_after["baseUrl"] == "http://b/v1"
+    assert m_after["apiKey"] == "sk-new-key-abcdefghij"
+    mu_mod.MuAdapter.path = config.HOME / ".mu" / "agent" / "settings.json"
+
+
+def test_mu_provider_prefix_switches_provider(tmp_path, monkeypatch):
+    """`--model bailian/qwen3.6-plus` names a configured provider, so the pair
+    moves; a slash that is not a provider stays part of the model id."""
+    from ccse import mu as mu_mod
+    settings, models = _mu_home(tmp_path)
+    monkeypatch.setattr(mu_mod, "MODELS_JSON", models, raising=False)
+    mu_mod.MuAdapter.path = settings  # type: ignore[misc]
+    a = mu_mod.MuAdapter()
+    a.apply({"mu.default_model": "bailian/qwen3.6-plus"}, dry=False)
+    s_after = json.loads(settings.read_text())
+    assert s_after["defaultProvider"] == "bailian"
+    assert s_after["defaultModel"] == "qwen3.6-plus"
+
+    a.apply({"mu.default_model": "qwen/qwen3-235b-a22b"}, dry=False)
+    s_after = json.loads(settings.read_text())
+    assert s_after["defaultProvider"] == "bailian"  # unknown prefix: provider held
+    assert s_after["defaultModel"] == "qwen/qwen3-235b-a22b"
+    mu_mod.MuAdapter.path = config.HOME / ".mu" / "agent" / "settings.json"
+
+
+def test_mu_repairs_dangling_provider(tmp_path, monkeypatch):
+    """defaultProvider absent from models.json means mu silently falls back to
+    the first provider with credentials — repoint it instead."""
+    from ccse import mu as mu_mod
+    settings, models = _mu_home(tmp_path)
+    s = json.loads(settings.read_text())
+    s["defaultProvider"] = "gone"
+    settings.write_text(json.dumps(s))
+    monkeypatch.setattr(mu_mod, "MODELS_JSON", models, raising=False)
+    mu_mod.MuAdapter.path = settings  # type: ignore[misc]
+    a = mu_mod.MuAdapter()
+    assert a.slots()[1].current == "gone"  # reported honestly before the fix
+    diffs = a.apply({"mu.default_model": "glm-5.2"}, dry=False)
+    assert any("defaultProvider" in d and "absent from models.json" in d for d in diffs)
+    s_after = json.loads(settings.read_text())
+    assert s_after["defaultProvider"] == "newapi"
+    assert s_after["defaultModel"] == "glm-5.2"
+    mu_mod.MuAdapter.path = config.HOME / ".mu" / "agent" / "settings.json"
+
+
+def test_mu_keeps_enabled_models_in_sync(tmp_path, monkeypatch):
+    """enabledModels gates startup selection: a switch that ignored it would
+    leave mu with no visible model."""
+    from ccse import mu as mu_mod
+    settings, models = _mu_home(tmp_path)
+    s = json.loads(settings.read_text())
+    s["enabledModels"] = ["newapi/*"]
+    settings.write_text(json.dumps(s))
+    monkeypatch.setattr(mu_mod, "MODELS_JSON", models, raising=False)
+    mu_mod.MuAdapter.path = settings  # type: ignore[misc]
+    mu_mod.MuAdapter().apply({"mu.default_model": "glm-5.2"}, dry=False)
+    assert "newapi/glm-5.2" in json.loads(settings.read_text())["enabledModels"]
+    mu_mod.MuAdapter.path = config.HOME / ".mu" / "agent" / "settings.json"
+
+
+def test_mu_dry_writes_nothing(tmp_path, monkeypatch):
+    from ccse import mu as mu_mod
+    settings, models = _mu_home(tmp_path)
+    before = (settings.read_text(), models.read_text())
+    monkeypatch.setattr(mu_mod, "MODELS_JSON", models, raising=False)
+    mu_mod.MuAdapter.path = settings  # type: ignore[misc]
+    diffs = mu_mod.MuAdapter().apply({"mu.default_model": "glm-5.2"}, dry=True)
+    assert diffs
+    assert (settings.read_text(), models.read_text()) == before
+    mu_mod.MuAdapter.path = config.HOME / ".mu" / "agent" / "settings.json"
+
+
+def test_mu_base_url_normalized(tmp_path: Path, monkeypatch):
+    """mu talks OpenAI-completions, so a bare gateway root needs /v1."""
+    from ccse import mu as mu_mod
+    settings, models = _mu_home(tmp_path)
+    monkeypatch.setattr(mu_mod, "MODELS_JSON", models, raising=False)
+    monkeypatch.setattr(mu_mod.MuAdapter, "path", settings, raising=False)
+    diffs = mu_mod.MuAdapter().apply({"mu.base_url": "http://host:6333"}, dry=False)
+    assert any("baseUrl" in d and "/v1" in d for d in diffs)
+    assert json.loads(models.read_text())["providers"]["newapi"]["baseUrl"] == \
+        "http://host:6333/v1"
+
+
+def test_mu_second_file_is_snapshotted(tmp_path, monkeypatch):
+    """mu/prime rewrite models.json as well as settings.json; `ccse undo` must
+    restore the endpoint and key too, not just the model selection."""
+    from ccse import mu as mu_mod
+    from ccse import prime as prime_mod
+    for mod, attr in ((mu_mod, "MuAdapter"), (prime_mod, "PrimeAdapter")):
+        a_cls = getattr(mod, attr)
+        extra = tuple(getattr(a_cls, "snapshot_paths", ()) or ())
+        assert extra, f"{attr} writes a second file but declares no snapshot_paths"
+        assert all(p.name == "models.json" for p in extra)
+
+
 def test_omp_adapter(tmp_path, monkeypatch):
     """OMP YAML: llm.model + defaultModel + modelRoles.default (`prov/model:lvl`)
     all follow --model; api_key ${VAR} persists via envrc."""
@@ -968,6 +1114,10 @@ def test_model_follow_subagent():
     got = cli_mod._model_assignments("gpt-5.6-luna", None, None, keep_prefix=True)
     assert got["claude.model"] == "gpt-5.6-luna[1M]"
     assert got["claude.subagent"] == "gpt-5.6-luna[1M]"
+    # --no-follow: only the primary slot
+    got_nf = cli_mod._model_assignments("gpt-5.6-luna", None, None,
+                                        keep_prefix=True, follow=False)
+    assert got_nf == {"claude.model": "gpt-5.6-luna[1M]"}
 
 
 def test_snow_adapter(tmp_path, monkeypatch):
@@ -1452,6 +1602,229 @@ def test_devin_swival_adapters(tmp_path, monkeypatch):
     assert s.apply({"swival.model": "glm-5.2",
                     "swival.base_url": "http://gw:6333/v1",
                     "swival.api_key": "sk-1"}, dry=False) == []
+
+
+
+def test_step_adapter(tmp_path, monkeypatch):
+    """step: settings.json defaultModel ("provider/id") + models.json custom
+    providers; endpoint/credentials on the current provider entry."""
+    from ccse import extra as extra_mod
+    (tmp_path / ".stepcode" / "agent").mkdir(parents=True)
+    settings = tmp_path / ".stepcode" / "agent" / "settings.json"
+    settings.write_text(json.dumps({"theme": "dark"}))
+    monkeypatch.setattr(extra_mod, "HOME", tmp_path, raising=False)
+    cls = type("_StepTest", (extra_mod.StepAdapter,), {
+        "path": settings,
+        "_models_path": property(lambda self: tmp_path / ".stepcode" / "agent" / "models.json")})
+    a = cls()
+    assert [s.current for s in a.slots()] == [None, None, None]
+    diffs = a.apply({"step.model": "qwen3.8:27b",
+                     "step.base_url": "http://gw:6333/v1",
+                     "step.api_key": "sk-1"}, dry=True)
+    assert len(diffs) == 5
+    assert json.loads(settings.read_text()) == {"theme": "dark"}  # dry
+
+    a.apply({"step.model": "qwen3.8:27b",
+             "step.base_url": "http://gw:6333/v1",
+             "step.api_key": "sk-1"}, dry=False)
+    s = json.loads(settings.read_text())
+    assert s["defaultModel"] == "custom/qwen3.8:27b"
+    assert s["theme"] == "dark"
+    p = json.loads((tmp_path / ".stepcode" / "agent" / "models.json").read_text())
+    e = p["providers"]["custom"]
+    assert e["baseUrl"] == "http://gw:6333/v1" and e["apiKey"] == "sk-1"
+    assert {"id": "qwen3.8:27b"} in e["models"]
+    assert a.slots()[0].current == "custom/qwen3.8:27b"
+    assert a.apply({"step.model": "qwen3.8:27b",
+                    "step.base_url": "http://gw:6333/v1",
+                    "step.api_key": "sk-1"}, dry=False) == []
+    # model-only switch reuses current provider
+    a.apply({"step.model": "m2"}, dry=False)
+    p = json.loads((tmp_path / ".stepcode" / "agent" / "models.json").read_text())
+    assert json.loads(settings.read_text())["defaultModel"] == "custom/m2"
+    assert e["baseUrl"] == "http://gw:6333/v1"
+
+
+
+def test_arkcli_adapter(tmp_path, monkeypatch):
+    """arkcli: config.yaml profiles.<active>.resources.text.default is the
+    default model; --base-url rewrites the profile; no-profile is skipped."""
+    from ccse import extra as extra_mod
+    (tmp_path / ".arkcli").mkdir()
+    cfg = tmp_path / ".arkcli" / "config.yaml"
+    cfg.write_text(
+        "lang: zh_cn\n"
+        "default_profile: default\n"
+        "profiles:\n"
+        "  default:\n"
+        "    tenant: volc\n"
+        "    base_url: https://ark.cn-beijing.volces.com/api/v3\n")
+    monkeypatch.setattr(extra_mod, "HOME", tmp_path, raising=False)
+    cls = type("_ArkcliTest", (extra_mod.ArkcliAdapter,), {"path": cfg})
+    a = cls()
+    assert a.slots()[0].current is None
+    diffs = a.apply({"arkcli.model": "doubao-seed-2-1-pro",
+                     "arkcli.base_url": "http://gw:6333/v1"}, dry=True)
+    assert len(diffs) == 2
+    assert "resources" not in cfg.read_text()  # dry: untouched
+    a.apply({"arkcli.model": "doubao-seed-2-1-pro",
+             "arkcli.base_url": "http://gw:6333/v1"}, dry=False)
+    assert "default: doubao-seed-2-1-pro" in cfg.read_text()
+    assert "base_url: http://gw:6333/v1" in cfg.read_text()
+    assert "lang: zh_cn" in cfg.read_text()  # rest preserved
+    assert a.slots()[0].current == "doubao-seed-2-1-pro"
+    assert a.apply({"arkcli.model": "doubao-seed-2-1-pro"}, dry=False) == []
+    # no-profile config: skipped with a hint
+    cfg.write_text("lang: zh_cn\n")
+    out = a.apply({"arkcli.model": "m"}, dry=False)
+    assert any("no profile" in x for x in out)
+
+
+def test_nmragent_adapter(tmp_path):
+    """nmragent: backend/.env dotenv file — line-level KEY=VALUE rewrite
+    keeps comments/order; api_key redacted in diffs; rewriter slots are
+    separate (non-following) model slots."""
+    from ccse import extra as extra_mod
+    cfg = tmp_path / "backend.env"
+    cfg.write_text(
+        "# LLM settings\n"
+        "LLM_PROVIDER=anthropic\n"
+        "OPENAI_API_KEY=sk-old\n"
+        "OPENAI_MODEL=deepseek-v4.1-flash\n"
+        "OPENAI_BASE_URL=http://192.168.0.14:6333/v1\n"
+        "# rewriter\n"
+        "QUERY_REWRITER_MODEL=deepseek-v4.1-flash\n"
+        "QUERY_REWRITER_FALLBACK_MODEL=deepseek-v4.1-flash\n")
+
+    a = type("_NMRagentTest", (extra_mod.NMRagentAdapter,),
+             {"path": cfg})()
+    slots = {s.key: s for s in a.slots()}
+    assert slots["nmragent.model"].current == "deepseek-v4.1-flash"
+    assert slots["nmragent.base_url"].kind == "base_url"
+    assert slots["nmragent.api_key"].kind == "api_key"
+    assert slots["nmragent.rewriter.fallback"].current == \
+        "deepseek-v4.1-flash"
+
+    diffs = a.apply({"nmragent.model": "qwen3.8:27b",
+                     "nmragent.api_key": "sk-new"}, dry=True)
+    assert len(diffs) == 2
+    assert any("sk-new" not in d for d in diffs)  # redacted
+    assert "OPENAI_MODEL=deepseek-v4.1-flash" in cfg.read_text()  # dry
+
+    diffs = a.apply({"nmragent.model": "qwen3.8:27b",
+                     "nmragent.base_url": "http://127.0.0.1:8000/v1",
+                     "nmragent.api_key": "sk-new",
+                     "nmragent.rewriter.model": "qwen3.8:27b"}, dry=False)
+    assert len(diffs) == 4
+    txt = cfg.read_text()
+    assert "OPENAI_MODEL=qwen3.8:27b" in txt
+    assert "OPENAI_BASE_URL=http://127.0.0.1:8000/v1" in txt
+    assert "OPENAI_API_KEY=sk-new" in txt
+    assert "QUERY_REWRITER_MODEL=qwen3.8:27b" in txt
+    # comments, order and untouched keys preserved
+    lines = txt.splitlines()
+    assert lines[0] == "# LLM settings"
+    assert lines[1] == "LLM_PROVIDER=anthropic"
+    assert "# rewriter" in lines
+    assert lines[-1] == "QUERY_REWRITER_FALLBACK_MODEL=deepseek-v4.1-flash"
+
+    assert a.apply({"nmragent.model": "qwen3.8:27b"}, dry=False) == []
+    assert len(a.apply({"nmragent.rewriter.fallback": "qwen3.8:27b"},
+                       dry=False)) == 1
+    assert a.apply({"nmragent.rewriter.fallback": "qwen3.8:27b"},
+                   dry=False) == []
+
+
+def test_graphpulse_adapter(tmp_path, monkeypatch):
+    """graphpulse: project-root .env.local (vite loadEnv) for GP_AI_MODEL;
+    NEWAPI_* base URL / api key follow the shell when exported there (vite
+    merges process.env over .env values, so the rc is the effective source),
+    otherwise the file. WeKnora lines preserved; bootstrap appends into a
+    missing file."""
+    from ccse import extra as extra_mod
+    from ccse import config as config_mod
+    for v in ("NEWAPI_API_KEY", "NEWAPI_API_BASE", "NEWAPI_BASE_URL"):
+        monkeypatch.delenv(v, raising=False)
+    rc = tmp_path / "rc.sh"
+    rc.write_text("# rc\n")
+    monkeypatch.setattr(config_mod, "SHELL_RC", rc, raising=False)
+    cfg = tmp_path / ".env.local"
+    cfg.write_text(
+        "# WeKnora widget\n"
+        "WEKNORA_CHANNEL=chan\n"
+        "WEKNORA_TOKEN=tok\n"
+        "NEWAPI_BASE_URL=http://192.168.0.14:6333/v1\n"
+        "NEWAPI_API_KEY=sk-old\n")
+
+    a = type("_GraphPulseTest", (extra_mod.GraphPulseAdapter,),
+             {"path": cfg})()
+    slots = {s.key: s for s in a.slots()}
+    assert slots["graphpulse.base_url"].label == "NEWAPI_BASE_URL"
+    assert slots["graphpulse.base_url"].current == "http://192.168.0.14:6333/v1"
+    assert slots["graphpulse.model"].current is None
+
+    diffs = a.apply({"graphpulse.model": "qwen3.8:27b",
+                     "graphpulse.base_url": "http://127.0.0.1:8000/v1",
+                     "graphpulse.api_key": "sk-new"}, dry=True)
+    assert len(diffs) == 3
+    assert "'sk-new'" not in " ".join(diffs)  # full value redacted
+    assert "GP_AI_MODEL" not in cfg.read_text()  # dry: untouched
+
+    a.apply({"graphpulse.model": "qwen3.8:27b",
+             "graphpulse.base_url": "http://127.0.0.1:8000/v1",
+             "graphpulse.api_key": "sk-new"}, dry=False)
+    txt = cfg.read_text()
+    lines = txt.splitlines()
+    assert "GP_AI_MODEL=qwen3.8:27b" in lines
+    assert "NEWAPI_BASE_URL=http://127.0.0.1:8000/v1" in lines
+    assert "NEWAPI_API_KEY=sk-new" in lines
+    # WeKnora block untouched, comment preserved
+    assert lines[0] == "# WeKnora widget"
+    assert "WEKNORA_CHANNEL=chan" in lines
+    assert a.apply({"graphpulse.model": "qwen3.8:27b"}, dry=False) == []
+
+    # file that configures NEWAPI_API_BASE: base_url must write there
+    cfg.write_text("NEWAPI_API_BASE=http://a:1/v1\n"
+                   "NEWAPI_BASE_URL=http://b:2/v1\n")
+    b = type("_GraphPulseTest2", (extra_mod.GraphPulseAdapter,),
+             {"path": cfg})()
+    assert b.slots()[2].label == "NEWAPI_API_BASE"
+    b.apply({"graphpulse.base_url": "http://c:3/v1"}, dry=False)
+    lines = cfg.read_text().splitlines()
+    assert lines[0] == "NEWAPI_API_BASE=http://c:3/v1"
+    assert lines[1] == "NEWAPI_BASE_URL=http://b:2/v1"
+
+    # bootstrap: missing .env.local gets created from scratch
+    cfg.unlink()
+    a.apply({"graphpulse.model": "m1", "graphpulse.api_key": "sk"},
+            dry=False)
+    assert sorted(cfg.read_text().splitlines()) == \
+        ["GP_AI_MODEL=m1", "NEWAPI_API_KEY=sk"]
+
+    # shell-exported NEWAPI_*: rc is the effective source (loadEnv merges
+    # process.env last) — base_url/api_key write there, file only gets the
+    # model keys
+    rc.write_text("# rc\n")
+    cfg.write_text("GP_AI_MODEL=m0\n")
+    monkeypatch.setenv("NEWAPI_BASE_URL", "http://shell:1/v1")
+    monkeypatch.setenv("NEWAPI_API_KEY", "sk-shell")
+    c = type("_GraphPulseTest3", (extra_mod.GraphPulseAdapter,),
+             {"path": cfg})()
+    labels = {s.key: s.label for s in c.slots()}
+    assert labels["graphpulse.base_url"] == "env NEWAPI_BASE_URL"
+    assert labels["graphpulse.api_key"] == "env NEWAPI_API_KEY"
+    assert c.slots()[2].current == "http://shell:1/v1"
+    diffs = c.apply({"graphpulse.model": "m1",
+                     "graphpulse.base_url": "http://new:2/v1",
+                     "graphpulse.api_key": "sk-new"}, dry=False)
+    assert len(diffs) == 3
+    txt = cfg.read_text()
+    assert "GP_AI_MODEL=m1" in txt
+    assert "NEWAPI" not in txt  # env-backed keys never leak into the file
+    rctxt = rc.read_text()
+    assert "NEWAPI_BASE_URL='http://new:2/v1'" in rctxt
+    assert "NEWAPI_API_KEY='sk-new'" in rctxt
+    assert c.apply({"graphpulse.model": "m1"}, dry=False) == []
 
 
 def test_prime_dangling_provider_repointed(tmp_path: Path, monkeypatch):

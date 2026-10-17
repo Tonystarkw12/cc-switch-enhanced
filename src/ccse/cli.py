@@ -24,12 +24,12 @@ PROFILES_PATH = config.HOME / ".ccse" / "profiles.toml"
 # the shell rc / user env (codex/grok/reasonix/memmy/omp/prime). verify must
 # snapshot that file too.
 _ENV_KEY_ADAPTERS = ("codex", "grok", "reasonix", "memmy", "omp", "prime",
-                     "ante", "qoder", "qodercn", "amp")
+                     "ante", "qoder", "qodercn", "amp", "graphpulse")
 
 
 def _load_adapters():
     # import side-effect registers adapters
-    from . import claude, cline, codex, gemini, opencode, qwen, prime, openakita, jcode, dsh, openclaude, openhands, commandcode, mcode, mimo, zcode  # noqa: F401
+    from . import claude, cline, codex, gemini, opencode, qwen, prime, mu, openakita, jcode, dsh, openclaude, openhands, commandcode, mcode, mimo, zcode  # noqa: F401
     from . import extra, envrc  # noqa: F401
     return all_adapters()
 
@@ -189,6 +189,13 @@ def _apply_assignments(assignments: dict[str, str], *, dry: bool,
             if a.path is not None and a.path.exists() and a.path not in seen:
                 seen.add(a.path)
                 touched.append(a.path)
+            # adapters whose apply() writes a second file (mu/prime models.json,
+            # crush's providers.json mirror) declare it here, so `ccse undo`
+            # restores the endpoint and key too, not just the model selection.
+            for extra in getattr(a, "snapshot_paths", ()) or ():
+                if extra is not None and extra.exists() and extra not in seen:
+                    seen.add(extra)
+                    touched.append(extra)
         if touched:
             config.save_snapshot(touched, stamp)
             config.append_history({
@@ -245,22 +252,27 @@ def _model_target(name: str, cur: str | None, keep_prefix: bool, suffix: str) ->
     return target
 
 
-def _model_assignments(name: str, only, exclude, keep_prefix: bool = True) -> dict[str, str]:
+def _model_assignments(
+        name: str, only, exclude, keep_prefix: bool = True,
+        follow: bool = True) -> dict[str, str]:
     """Build {slot_key: target} for every adapter in scope.
 
     Sets the adapter's primary slot; adapters that declare ``follow``
     (e.g. claude.main + claude.subagent) get those too, plus any slot
     that carries ``follows=True`` (dynamic subagent/secondary model
-    fields discovered via ``slots()``)."""
+    fields discovered via ``slots()``). ``follow=False`` sets only the
+    primary slot (--no-follow)."""
     adapters = _filter_adapters(_load_adapters(), only, exclude)
     out: dict[str, str] = {}
     for a in adapters:
         if not a.available:
             continue
         slots = {s.key: s for s in _safe_slots(a)}
-        keys = [_primary_key(a), *_follow_keys(a)]
-        keys += [s.key for s in slots.values()
-                 if getattr(s, "follows", False) and s.key not in keys]
+        keys = [_primary_key(a)]
+        if follow:
+            keys += [*_follow_keys(a),
+                     *[s.key for s in slots.values()
+                       if getattr(s, "follows", False) and s.key not in keys]]
         for key in keys:
             if key not in slots:
                 continue
@@ -296,7 +308,8 @@ def cmd_apply(args) -> int:
     if args.model is not None:
         assignments.update(_model_assignments(
             args.model, args.only, args.exclude,
-            keep_prefix=not args.no_keep_prefix))
+            keep_prefix=not args.no_keep_prefix,
+            follow=not args.no_follow))
         tags.append(f"--model {args.model}" + ("" if not args.no_keep_prefix else " (raw)"))
     elif args.profile:
         assignments.update(_resolve_profile(args.profile))
@@ -323,7 +336,8 @@ def cmd_diff(args) -> int:
     if args.model is not None:
         assignments.update(_model_assignments(
             args.model, args.only, args.exclude,
-            keep_prefix=not args.no_keep_prefix))
+            keep_prefix=not args.no_keep_prefix,
+            follow=not args.no_follow))
     elif args.profile:
         assignments.update(_resolve_profile(args.profile))
     if getattr(args, "base_url", None):
@@ -623,6 +637,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-keep-prefix", action="store_true",
                    help="set the model name verbatim, dropping any 'prefix/' "
                         "route id the adapter had (use with care)")
+    p.add_argument("--no-follow", action="store_true",
+                   help="with --model: set only each agent's primary slot, "
+                        "don't touch subagent/follow slots (e.g. claude "
+                        "CLAUDE_CODE_SUBAGENT_MODEL)")
     _add_endpoint(p)
     sub = p.add_subparsers(dest="cmd")
 
@@ -647,6 +665,9 @@ def build_parser() -> argparse.ArgumentParser:
     pa.add_argument("--no-backup", action="store_true", help="skip snapshot")
     pa.add_argument("--no-keep-prefix", action="store_true",
                     help="set model verbatim (drop route prefix)")
+    pa.add_argument("--no-follow", action="store_true",
+                    help="set only the primary slot, don't touch "
+                         "subagent/follow slots")
     _add_endpoint(pa)
     pa.set_defaults(func=cmd_apply)
 
@@ -656,6 +677,9 @@ def build_parser() -> argparse.ArgumentParser:
     pd.add_argument("profile", nargs="?")
     pd.add_argument("--no-keep-prefix", action="store_true",
                     help="set model verbatim (drop route prefix)")
+    pd.add_argument("--no-follow", action="store_true",
+                    help="set only the primary slot, don't touch "
+                         "subagent/follow slots")
     _add_endpoint(pd)
     pd.set_defaults(func=cmd_diff)
 
@@ -801,7 +825,8 @@ def main(argv: list[str] | None = None) -> int:
             if getattr(args, "model", None) is not None:
                 kp = not getattr(args, "no_keep_prefix", False)
                 assignments.update(_model_assignments(
-                    args.model, args.only, args.exclude, keep_prefix=kp))
+                    args.model, args.only, args.exclude, keep_prefix=kp,
+                    follow=not getattr(args, "no_follow", False)))
             if getattr(args, "base_url", None):
                 assignments.update(_endpoint_assignments(
                     KIND_BASE_URL, args.base_url, args.only, args.exclude))
