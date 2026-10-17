@@ -23,4 +23,17 @@ build/
 .hallmark/
 logs/
 AGENTS.md
+CLAUDE.md
 .tgrep/
+.zcode/
+.zcodeignore
+.zvec-grep/
+
+# third-party skill bundles synced into .agents/skills by tooling;
+# the project's own skill (.agents/skills/ccse) stays tracked
+.agents/skills/*
+!.agents/skills/ccse/
+
+# os / editor noise
+.DS_Store
+.mypy_cache/
