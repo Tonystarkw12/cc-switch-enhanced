@@ -1,191 +1,318 @@
 <!doctype html>
 <html lang="zh-CN">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>ccse — 一行命令，切换全部 AI 编程助手</title>
-<meta name="description" content="ccse 为 37 个 AI 编程助手同时切换模型、中转地址与 API key：写前自动快照、verify 端点探测、undo 一键回滚。">
-<link rel="stylesheet" href="styles.css">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>ccse — 一行命令，切换全部 53 个 AI 编程助手</title>
+  <meta name="description" content="ccse 为 53 个 AI 编程助手同时切换模型、中转地址与 API Key：写前自动快照、verify 端点探测、subagent 智能跟随、undo 一键回滚。">
+  <meta name="theme-color" content="#070709">
+  <link rel="stylesheet" href="tokens.css">
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 
-<nav class="nv" aria-label="主导航">
-  <a class="nv__mark" href="#top">ccse</a>
-  <ul class="nv__links">
-    <li><a class="nv__link" href="#install">安装</a></li>
-    <li><a class="nv__link nv__link--adapters" href="#adapters">适配器</a></li>
-    <li><a class="nv__link" href="https://github.com/Tonystarkw12/cc-switch-enhanced">GitHub ↗</a></li>
-  </ul>
-</nav>
+  <!-- Background Aurora Canvas & Dot Matrix Overlay -->
+  <canvas id="aurora-canvas"></canvas>
+  <div class="grid-overlay" aria-hidden="true"></div>
 
-<main id="top">
-
-  <!-- H4 · stat-led hero -->
-  <header class="hero">
-    <div class="wrap hero__grid">
-      <p class="figure" aria-label="37 个适配器"><span id="stat" aria-hidden="true">37</span><span class="unit">个适配器</span></p>
-      <div class="hero__right">
-        <p class="qualifier">个 AI 编程助手，一行命令同时切换模型、端点与 key。</p>
-        <p class="lede">ccse 读写每个 agent 的原生配置：Claude Code、Codex、opencode、Gemini、Qwen Code、aider……换聚合端不再逐个改文件。写前自动快照，<code>ccse undo</code> 一键回滚。</p>
-        <div class="hero__cta">
-          <button class="pill pill--fill" type="button" data-copy="uv tool install git+https://github.com/Tonystarkw12/cc-switch-enhanced">复制安装命令</button>
-          <a class="tlink" href="https://github.com/Tonystarkw12/cc-switch-enhanced">查看源码 ↗</a>
-        </div>
-      </div>
-    </div>
+  <!-- Floating Glass Nav -->
+  <header class="navbar-wrapper">
+    <nav class="nav" aria-label="主导航">
+      <a class="nav-brand" href="#top">
+        <span class="brand-dot" aria-hidden="true"></span>
+        ccse
+      </a>
+      <ul class="nav-links">
+        <li><a class="nav-link" href="#features">特性</a></li>
+        <li><a class="nav-link" href="#terminal">交互演示</a></li>
+        <li><a class="nav-link" href="#adapters">适配列表</a></li>
+        <li><a class="nav-link" href="#install">快速安装</a></li>
+      </ul>
+      <a class="nav-cta" href="https://github.com/Tonystarkw12/cc-switch-enhanced" target="_blank" rel="noopener">
+        <span>GitHub</span>
+        <span aria-hidden="true">↗</span>
+      </a>
+    </nav>
   </header>
 
-  <!-- install -->
-  <section class="sec sec--tight" id="install">
-    <div class="wrap">
-      <header class="head-hang">
-        <h2>安装</h2>
-        <p class="head-note">单机 CLI，本地运行；配置文件写完即生效，无后台、无账号。</p>
-      </header>
-      <div class="code">
-        <button class="copy" type="button" data-copy="uv tool install git+https://github.com/Tonystarkw12/cc-switch-enhanced">复制</button>
-<pre><span class="c"># 一行安装（uv，直接装 GitHub 主分支）</span>
-<span class="p">$</span> uv tool install git+https://github.com/Tonystarkw12/cc-switch-enhanced<span class="caret" aria-hidden="true"></span></pre>
-      </div>
-      <div class="code">
-        <button class="copy" type="button" data-copy="git clone https://github.com/Tonystarkw12/cc-switch-enhanced
-cd cc-switch-enhanced
-uv tool install .">复制</button>
-<pre><span class="c"># 或克隆后本地安装；pipx 同理（pipx install .）</span>
-<span class="p">$</span> git clone https://github.com/Tonystarkw12/cc-switch-enhanced
-<span class="p">$</span> cd cc-switch-enhanced && uv tool install .
-<span class="c"># 切换</span>
-<span class="p">$</span> ccse --model "glm-5.2"</pre>
-      </div>
-      <p class="install-note">Windows 支持 <code>setx</code> 持久化 env 型变量；升级 <code>uv tool upgrade cc-switch-enhanced</code> 或重跑安装命令加 <code>--force</code>。</p>
-    </div>
-  </section>
+  <main id="top">
 
-  <!-- how · command rows -->
-  <section class="sec" id="how">
-    <div class="wrap">
-      <header class="head-hang">
-        <h2>一行切换，写前快照</h2>
-      </header>
-      <div class="rows">
-        <div class="row">
-          <p class="row__cmd">ccse <span class="flag">--model</span> "glm-5.2"</p>
-          <p class="row__what">全 fleet 主模型一键切换，subagent 槽位跟随，claude 自动补 <code>[1M]</code> 标记。</p>
+    <!-- Hero Section -->
+    <section class="hero">
+      <div class="wrap">
+        <div class="hero-pill">
+          <span class="hero-pill-badge">v0.5.0</span>
+          <span>已收录 53 个主流 AI 编程助手 · 无后台纯本地</span>
         </div>
-        <div class="row">
-          <p class="row__cmd">ccse <span class="flag">--base-url</span> U <span class="flag">--api-key</span> K</p>
-          <p class="row__what">端点与 key 同步切换；env 型 agent 的 key 写入 <code>~/.zshrc</code>（Windows 走 <code>setx</code>）。</p>
+
+        <h1 class="hero-title">
+          一行命令，切换全部<br>
+          <span class="gradient-text">AI 编程助手</span>
+        </h1>
+
+        <p class="hero-subtitle">
+          原生读写每个 agent 的底层配置：Claude Code、Codex、OpenCode、Gemini、Trae、Devin、Aider……换聚合端不再逐个改文件。写前自动快照，支持秒级一键回滚。
+        </p>
+
+        <div class="hero-actions">
+          <button class="btn-shiny" type="button" data-copy="uv tool install git+https://github.com/Tonystarkw12/cc-switch-enhanced">
+            <span>⚡ 复制一键安装命令</span>
+          </button>
+          <a class="btn-glass" href="https://github.com/Tonystarkw12/cc-switch-enhanced" target="_blank" rel="noopener">
+            <span>⭐ Star on GitHub</span>
+          </a>
         </div>
-        <div class="row">
-          <p class="row__cmd">ccse apply <span class="flag">&lt;profile&gt;</span></p>
-          <p class="row__what">按 <code>~/.ccse/profiles.toml</code> 配方回切整套组合；<code>genprofile</code> 把当前状态抓成配方。</p>
+
+        <!-- Quick Stats -->
+        <div class="hero-stats-bar">
+          <div class="stat-item">
+            <strong id="stat-number">53</strong>
+            <span>个适配器</span>
+          </div>
+          <div class="stat-divider" aria-hidden="true"></div>
+          <div class="stat-item">
+            <strong>100%</strong>
+            <span>原子写防损坏</span>
+          </div>
+          <div class="stat-divider" aria-hidden="true"></div>
+          <div class="stat-item">
+            <strong>0</strong>
+            <span>常驻后台/无账号</span>
+          </div>
         </div>
-        <div class="row">
-          <p class="row__cmd">ccse verify</p>
-          <p class="row__what">写完探测每个端点：key 是否有效、模型是否在列表里，FAIL 退出码 1。</p>
+
+        <!-- Interactive Terminal Playground -->
+        <div class="terminal-wrapper" id="terminal">
+          <div class="terminal-box spotlight-card">
+            <div class="terminal-header">
+              <div class="terminal-dots" aria-hidden="true">
+                <span class="dot dot-red"></span>
+                <span class="dot dot-yellow"></span>
+                <span class="dot dot-green"></span>
+              </div>
+              <div class="terminal-title">
+                <span>zsh — ccse fleet control</span>
+              </div>
+              <button class="btn-copy" type="button" data-copy="ccse --model &quot;claude-sonnet-5-5&quot;">复制指令</button>
+            </div>
+
+            <!-- Demo Tabs -->
+            <div class="terminal-tabs" role="tablist">
+              <button class="term-tab active" type="button" data-demo="model">1. 切主模型+subagent</button>
+              <button class="term-tab" type="button" data-demo="endpoint">2. 切端点+API Key</button>
+              <button class="term-tab" type="button" data-demo="verify">3. 端点自检 verify</button>
+              <button class="term-tab" type="button" data-demo="rules">4. 行为规范注入 rules</button>
+              <button class="term-tab" type="button" data-demo="undo">5. 安全回滚 undo</button>
+            </div>
+
+            <div class="terminal-explain">
+              <span class="t-cyan">💡</span>
+              <span id="terminal-desc">一行切换全 agent 主模型，自动为 Claude 追加 [1M]，subagent 槽位智能跟随</span>
+            </div>
+
+            <div class="terminal-code">
+              <div class="terminal-prompt-line">
+                <span class="terminal-prompt">$</span>
+                <span class="terminal-cmd" id="terminal-cmd">ccse --model "claude-sonnet-5-5"</span>
+                <span class="terminal-cursor" aria-hidden="true"></span>
+              </div>
+              <div class="terminal-output" id="terminal-body">
+                <!-- Content dynamically typed by app.js -->
+              </div>
+            </div>
+          </div>
         </div>
-        <div class="row">
-          <p class="row__cmd">ccse undo</p>
-          <p class="row__what">恢复最近一次 apply 的写前快照，恢复前再备份一层，不会二次丢数据。</p>
+
+      </div>
+    </section>
+
+    <!-- Bento Grid Features Section -->
+    <section class="sec" id="features">
+      <div class="wrap">
+        <header class="sec-head">
+          <span class="sec-tag">Why ccse</span>
+          <h2 class="sec-title">专为多 Agent 开发者打造的全链路闭环</h2>
+          <p class="sec-desc">告别多工具配置碎片化。一次变更，自动兼顾前缀路由、子模型跟随、凭证安全与状态自愈。</p>
+        </header>
+
+        <div class="bento-grid">
+          <!-- Card 1: Subagent Follow -->
+          <div class="bento-item bento-col-8 spotlight-card">
+            <div>
+              <div class="bento-icon">🧬</div>
+              <h3 class="bento-title">Subagent 智能跟随，保留路由前缀</h3>
+              <p class="bento-desc">
+                <code>--model</code> 不只换顶层主模型。OpenCode 的 4 个 agent 槽位（build/explore/general/plan）、OpenClaw 的 subagent 槽位、Claude 的 <code>CLAUDE_CODE_SUBAGENT_MODEL</code> 均智能跟随主模型，且各槽位自动保留已配置的路由前缀（如 <code>newapi/...</code>），Claude 专属 <code>[1M]</code> 上下文标记全自动补全。
+              </p>
+            </div>
+            <div class="bento-preview-code">
+              model: 'newapi/gemini-3.8-flash' → 'newapi/claude-sonnet-5-5'<br>
+              env.CLAUDE_CODE_SUBAGENT_MODEL: 'glm-5.3-flash[1M]' → 'claude-sonnet-5-5[1M]'
+            </div>
+          </div>
+
+          <!-- Card 2: Snapshots & Undo -->
+          <div class="bento-item bento-col-4 spotlight-card">
+            <div>
+              <div class="bento-icon bento-icon--violet">🛡️</div>
+              <h3 class="bento-title">写前快照与双重 Undo</h3>
+              <p class="bento-desc">
+                任何变更落盘前，目标文件全量备份到 <code>~/.ccse/snapshots/</code>。若配置异常，运行 <code>ccse undo</code> 秒级恢复。恢复时还会自动留存 <code>pre-restore</code> 镜像，杜绝二次丢失。
+              </p>
+            </div>
+            <div class="bento-preview-code">
+              $ ccse undo 20261017-094120<br>
+              restored 6 file(s) safely ✓
+            </div>
+          </div>
+
+          <!-- Card 3: Dual-Path Verify -->
+          <div class="bento-item bento-col-4 spotlight-card">
+            <div>
+              <div class="bento-icon">🔍</div>
+              <h3 class="bento-title">双通道端点探测 Verify</h3>
+              <p class="bento-desc">
+                换完自动测通：GET <code>/v1/models</code> 校验 Bearer 密钥与模型可用性，Gemini 执行原生 v1beta 探活。模型缺失即时 <code>WARN</code> 预警，发现 401 立即标记 <code>FAIL</code>。
+              </p>
+            </div>
+            <div class="bento-preview-code">
+              ✓ codex PASS (284 models listed)<br>
+              ! droid WARN (model NOT in gateway)
+            </div>
+          </div>
+
+          <!-- Card 4: Rules Injection -->
+          <div class="bento-item bento-col-4 spotlight-card">
+            <div>
+              <div class="bento-icon bento-icon--violet">🧠</div>
+              <h3 class="bento-title">Rules 行为注入 (caveman+rtk)</h3>
+              <p class="bento-desc">
+                模型是结构，规范是灵魂。<code>ccse rules --apply</code> 幂等注入极简输出规则与 rtk 命令行代理，单机开发大幅节省 60%~90% 的上下文 Token 损耗。
+              </p>
+            </div>
+            <div class="bento-preview-code">
+              &lt;!-- ccse:caveman-rtk:START --&gt;<br>
+              Idempotent injection across 25 rules
+            </div>
+          </div>
+
+          <!-- Card 5: Penv Environment Store -->
+          <div class="bento-item bento-col-4 spotlight-card">
+            <div>
+              <div class="bento-icon">📦</div>
+              <h3 class="bento-title">Penv 项目级 .env 快速切换</h3>
+              <p class="bento-desc">
+                在 <code>~/.ccse/providers.toml</code> 沉淀提供商模板，<code>ccse penv ./project myprov</code> 一键覆写项目 <code>.env</code> 中的 Key、Base URL 与 Model 变量。
+              </p>
+            </div>
+            <div class="bento-preview-code">
+              $ ccse penv ./myproject newapi<br>
+              3 env variables updated in .env
+            </div>
+          </div>
         </div>
       </div>
-    </div>
-  </section>
+    </section>
 
-  <!-- adapters · F3 spec sheet -->
-  <section class="sec" id="adapters">
-    <div class="wrap">
-      <header class="head-hang">
-        <h2>覆盖 37 个 agent</h2>
-        <p class="head-note">只动声明过的槽位，其余配置一字不改。节选：</p>
-      </header>
-      <table class="spec">
-        <thead>
-          <tr><th scope="col">适配器</th><th scope="col">配置文件</th><th scope="col">--model 写入</th></tr>
-        </thead>
-        <tbody>
-          <tr><td>claude</td><td data-label="配置文件">~/.claude/settings.json</td><td data-label="模型槽位" class="muted">env.ANTHROPIC_MODEL + subagent</td></tr>
-          <tr><td>codex</td><td data-label="配置文件">~/.codex/config.toml</td><td data-label="模型槽位" class="muted">顶层 model + 活动 provider</td></tr>
-          <tr><td>opencode</td><td data-label="配置文件">opencode.json</td><td data-label="模型槽位" class="muted">model + 4 个 agent 槽</td></tr>
-          <tr><td>gemini</td><td data-label="配置文件">~/.gemini/.env</td><td data-label="模型槽位" class="muted">GEMINI_MODEL</td></tr>
-          <tr><td>qwen</td><td data-label="配置文件">~/.qwen/settings.json</td><td data-label="模型槽位" class="muted">model.name</td></tr>
-          <tr><td>aider</td><td data-label="配置文件">~/.aider.conf.yml</td><td data-label="模型槽位" class="muted">model（裸名自动补 openai/）</td></tr>
-          <tr><td>droid</td><td data-label="配置文件">~/.factory/settings.json</td><td data-label="模型槽位" class="muted">customModels 组合 id</td></tr>
-          <tr><td>kimi</td><td data-label="配置文件">~/.zshrc（env）</td><td data-label="模型槽位" class="muted">KIMI_MODEL_NAME</td></tr>
-        </tbody>
-      </table>
-      <p class="spec-more">另有 29 个：<code>crush</code>、<code>droid</code>、<code>forge</code>、<code>grok</code>、<code>hermes</code>、<code>kilocode</code>、<code>memmy</code>、<code>omp</code>、<code>pi</code>、<code>prime</code>…… <a class="tlink" href="https://github.com/Tonystarkw12/cc-switch-enhanced#adapter-覆盖37-个">完整表格见 README ↗</a></p>
-    </div>
-  </section>
+    <!-- 53 Adapters Explorer -->
+    <section class="sec" id="adapters">
+      <div class="wrap">
+        <header class="sec-head">
+          <span class="sec-tag">Ecosystem Matrix</span>
+          <h2 class="sec-title">53 个 AI 编程助手全面覆盖</h2>
+          <p class="sec-desc">只改声明的路由与模型槽位，配置文件内其他自定义项一字不动。</p>
+        </header>
 
-  <!-- safety -->
-  <section class="sec sec--tight" id="safety">
-    <div class="wrap">
-      <header class="head-hang">
-        <h2>改动可撤回</h2>
-      </header>
-      <ul class="safety">
-        <li><b>写前快照</b><span>每次 apply 先把要改的文件存进 <code>~/.ccse/snapshots/</code>，<code>ccse undo [stamp]</code> 任意回滚。</span></li>
-        <li><b>原子写</b><span>临时文件 + <code>os.replace</code>；解析失败即中止，不碰原文件。</span></li>
-        <li><b>预览先行</b><span><code>--dry</code> 与 <code>ccse diff</code> 只打印差异，不落盘。</span></li>
-        <li><b>坏配置不炸批</b><span>某个 agent 配置损坏时跳过并告警，其余照常切换。</span></li>
-        <li><b>key 不留痕</b><span><code>show</code>/<code>verify</code> 只显示前 6 位；history 记录对 key 脱敏。</span></li>
+        <div class="adapters-explorer spotlight-card">
+          <div class="adapters-controls">
+            <div class="adapters-filters" role="group" aria-label="适配器分类筛选">
+              <button class="af-btn active" type="button" data-cat="all">全部</button>
+              <button class="af-btn" type="button" data-cat="cli">CLI 助手 (46)</button>
+              <button class="af-btn" type="button" data-cat="ide">IDE 插件 (4)</button>
+              <button class="af-btn" type="button" data-cat="srv">服务/代理 (2)</button>
+              <button class="af-btn" type="button" data-cat="rules">规则增强 (1)</button>
+            </div>
+
+            <div class="adapters-search-box">
+              <span class="search-icon" aria-hidden="true">🔍</span>
+              <input class="adapters-search-input" id="adapter-search" type="text" placeholder="搜索助手名称、格式或路径..." aria-label="搜索适配器">
+              <span class="adapters-count" id="adapter-count-badge">53 / 53</span>
+            </div>
+          </div>
+
+          <!-- Grid populated dynamically by app.js -->
+          <div class="adapters-grid" id="adapters-grid"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Installation & Quick Start -->
+    <section class="sec" id="install">
+      <div class="wrap">
+        <header class="sec-head">
+          <span class="sec-tag">Quickstart</span>
+          <h2 class="sec-title">一分钟极速安装</h2>
+          <p class="sec-desc">使用 uv 或 pipx 安装，全局独立环境运行，无依赖冲突。</p>
+        </header>
+
+        <div class="install-card spotlight-card">
+          <div class="code-box">
+            <button class="btn-copy" type="button" data-copy="uv tool install git+https://github.com/Tonystarkw12/cc-switch-enhanced">复制</button>
+            <pre><span class="code-comment"># 方式 1: 推荐 uv 直接全局安装</span>
+<span class="code-prompt">$</span>uv tool install git+https://github.com/Tonystarkw12/cc-switch-enhanced
+
+<span class="code-comment"># 方式 2: 克隆仓库本地安装 (pipx 亦同理)</span>
+<span class="code-prompt">$</span>git clone https://github.com/Tonystarkw12/cc-switch-enhanced.git
+<span class="code-prompt">$</span>cd cc-switch-enhanced && uv tool install .
+
+<span class="code-comment"># 立即体验全 fleet 模型切换</span>
+<span class="code-prompt">$</span>ccse --model "glm-5.2"</pre>
+          </div>
+
+          <div class="install-features">
+            <div class="if-item">
+              <span class="if-icon">✓</span>
+              <div>
+                <strong>跨平台支持</strong>
+                <p>Linux / macOS 写入 ~/.zshrc，Windows 自动走 setx 用户环境。</p>
+              </div>
+            </div>
+            <div class="if-item">
+              <span class="if-icon">✓</span>
+              <div>
+                <strong>安全原子写入</strong>
+                <p>同目录临时文件 + os.replace，彻底避免文件写入中断导致损坏。</p>
+              </div>
+            </div>
+            <div class="if-item">
+              <span class="if-icon">✓</span>
+              <div>
+                <strong>零密钥泄露</strong>
+                <p>命令行日志与快照历史中的 API Key 自动脱敏，只留前 6 位识别。</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Global Toast -->
+  <div class="toast" id="global-toast" role="status" aria-live="polite">已复制到剪贴板</div>
+
+  <!-- Minimal Dark Footer -->
+  <footer class="foot">
+    <div class="wrap foot-content">
+      <p>© 2026 cc-switch-enhanced · Released under the MIT License</p>
+      <ul class="foot-links">
+        <li><a href="https://github.com/Tonystarkw12/cc-switch-enhanced" target="_blank" rel="noopener">GitHub 仓库</a></li>
+        <li><a href="https://github.com/Tonystarkw12/cc-switch-enhanced/releases" target="_blank" rel="noopener">版本更新</a></li>
+        <li><a href="https://app.devin.ai/org/xing-ling-ji-zhu/wiki/Tonystarkw12/cc-switch-enhanced?branch=master" target="_blank" rel="noopener">DeepWiki 文档</a></li>
       </ul>
     </div>
-  </section>
+  </footer>
 
-  <!-- CTA strip -->
-  <section class="strip">
-    <div class="wrap strip__in">
-      <p class="strip__line">换聚合端，不该是一个个改配置文件。</p>
-      <div class="hero__cta">
-        <a class="pill pill--fill" href="#install">安装 ccse</a>
-        <a class="tlink" href="https://github.com/Tonystarkw12/cc-switch-enhanced">GitHub 仓库 ↗</a>
-      </div>
-    </div>
-  </section>
-
-</main>
-
-<!-- Ft2 · inline rule -->
-<footer class="foot">
-  <div class="wrap">
-    <p><span>© 2026 cc-switch-enhanced</span><span>MIT</span><a href="https://github.com/Tonystarkw12/cc-switch-enhanced">GitHub</a><a href="https://github.com/Tonystarkw12/cc-switch-enhanced/releases">Releases</a></p>
-  </div>
-</footer>
-
-<script>
-(function () {
-  var reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  var el = document.getElementById("stat");
-  var target = 37;
-  if (reduce) { el.textContent = target; }
-  else {
-    var t0 = null;
-    var tick = function (t) {
-      if (t0 === null) t0 = t;
-      var k = Math.min((t - t0) / 1200, 1);
-      k = 1 - Math.pow(1 - k, 3); /* ease-out cubic */
-      el.textContent = Math.round(k * target);
-      if (k < 1) requestAnimationFrame(tick);
-    };
-    requestAnimationFrame(tick);
-  }
-
-  document.querySelectorAll("[data-copy]").forEach(function (btn) {
-    btn.dataset.label = btn.textContent;
-    btn.addEventListener("click", function () {
-      navigator.clipboard.writeText(btn.dataset.copy).then(function () {
-        btn.dataset.state = "copied";
-        btn.textContent = "已复制 ✓";
-        setTimeout(function () {
-          delete btn.dataset.state;
-          btn.textContent = btn.dataset.label;
-        }, 2500);
-      });
-    });
-  });
-})();
-</script>
+  <script src="app.js"></script>
 </body>
 </html>
