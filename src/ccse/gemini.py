@@ -25,7 +25,7 @@ class GeminiAdapter:
 
     def _env(self) -> dict[str, str]:
         out: dict[str, str] = {}
-        for line in self.path.read_text("utf-8").splitlines():
+        for line in self.path.read_text("utf-8-sig").splitlines():
             line = line.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue

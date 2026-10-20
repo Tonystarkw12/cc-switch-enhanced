@@ -82,7 +82,7 @@ class MimoAdapter:
     def slots(self) -> list[Slot]:
         if not self.available:
             return []
-        doc = _parse(self.path.read_text("utf-8"))
+        doc = _parse(self.path.read_text("utf-8-sig"))
         out = [Slot(key=f"{self.id}.model", label="model", current=doc.get("model"))]
         prov = _provider_of(doc)
         opts = ((doc.get("provider") or {}).get(prov) or {}).get("options") \
@@ -113,7 +113,7 @@ class MimoAdapter:
                     if k.startswith(f"{self.id}.")}
         if not relevant:
             return []
-        text = self.path.read_text("utf-8")
+        text = self.path.read_text("utf-8-sig")
         doc = _parse(text)
         diffs: list[str] = []
         if "model" in relevant:

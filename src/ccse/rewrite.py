@@ -86,7 +86,7 @@ def _rewrite_source(path: Path, assignments: dict[str, str], dry: bool) -> list[
                      f"{assignments[kind]!r}")
         return m.group(0).replace(f'"{m.group("val")}"', f'"{assignments[kind]}"')
 
-    for line in path.read_text("utf-8", errors="replace").splitlines(keepends=True):
+    for line in path.read_text("utf-8-sig", errors="replace").splitlines(keepends=True):
         new_line = pat.sub(_repl, line)
         lm = _LITERAL.match(new_line)
         if lm:
@@ -107,7 +107,7 @@ def _rewrite_source(path: Path, assignments: dict[str, str], dry: bool) -> list[
 def _rewrite_env(path: Path, assignments: dict[str, str], dry: bool) -> list[str]:
     diffs: list[str] = []
     out: list[str] = []
-    for line in path.read_text("utf-8", errors="replace").splitlines(keepends=True):
+    for line in path.read_text("utf-8-sig", errors="replace").splitlines(keepends=True):
         stripped = line.strip()
         if not stripped or stripped.startswith("#") or "=" not in stripped:
             out.append(line)

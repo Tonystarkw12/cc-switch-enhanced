@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 from pathlib import Path
 
 from . import config
@@ -22,8 +23,24 @@ HOME = config.HOME
 # matches: [export|setenv] VAR = <rhs>   where rhs may be bare, 'single', or "double"
 _LINE = re.compile(
     r"^(?:\s*)(?:export\s+|setenv\s+)?(?P<var>[A-Za-z_][A-Za-z0-9_]*)"
-    r"\s*=\s*(?P<val>.*)$"
+    r"\s*=(?P<val>.*)$"
 )
+
+
+def _get_env(var: str) -> str | None:
+    """Read env var: check process env first; on Windows, check HKCU\\Environment."""
+    val = os.environ.get(var)
+    if val is not None:
+        return val
+    if sys.platform == "win32":
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
+                v, _ = winreg.QueryValueEx(key, var)
+                return str(v)
+        except OSError:
+            pass
+    return None
 
 
 def _unquote(rhs: str) -> str:
@@ -46,11 +63,14 @@ def _quote(val: str) -> str:
 
 def _setx(var: str, value: str) -> bool:
     """Persist `VAR=value` into the Windows user environment (survives reboot;
-    current process won't see it until next shell)."""
+    current process won't see it until next shell). Also updates os.environ."""
     import subprocess
     try:
         r = subprocess.run(["setx", var, value], capture_output=True, text=True)
-        return r.returncode == 0
+        if r.returncode == 0:
+            os.environ[var] = value
+            return True
+        return False
     except OSError:
         return False
 
@@ -64,10 +84,11 @@ def ensure_env_var(var: str, value: str, path: Path | None = None) -> tuple[str,
     persist a literal key into the shell rc / user env once.
     """
     if config.OS_NAME == "windows":
-        old = os.environ.get(var)
+        old = _get_env(var)
         if old == value:
             return None
         if _setx(var, value):
+            os.environ[var] = value
             return (old or "<unset>", value)
         return None
     file_path = path or config.SHELL_RC
@@ -137,7 +158,7 @@ def make_envrc_adapter(
             out = []
             for label, var in slot2var.items():
                 out.append(Slot(key=f"{adapter_id}.{label}", label=label,
-                                current=os.environ.get(var),
+                                current=_get_env(var),
                                 kind=slot_kind.get(label, KIND_MODEL)))
             return out
         fp = _fp()
@@ -165,12 +186,13 @@ def make_envrc_adapter(
                 var = slot2var.get(label)
                 if not var:
                     continue
-                old = os.environ.get(var)
+                old = _get_env(var)
                 if old == val:
                     continue
                 diffs.append(f"  env {var}: {old!r} -> {val!r}")
                 if not dry:
-                    _setx(var, val)
+                    if _setx(var, val):
+                        os.environ[var] = val
             return diffs
         fp = _fp()
         if fp is None or not fp.exists():
@@ -211,7 +233,7 @@ def make_envrc_adapter(
         (object,),
         {"id": adapter_id, "name": name, "path": file_path,
          "available": property(
-             lambda self: file_path is None or file_path.exists()),
+             lambda self: True if _is_windows() else (_fp() is not None and _fp().exists())),
          "primary": f"{adapter_id}.{primary}",
          "slots": slots, "apply": apply},
     )

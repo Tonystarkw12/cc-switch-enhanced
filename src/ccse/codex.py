@@ -20,7 +20,7 @@ class CodexAdapter:
         return self.path.exists()
 
     def _load(self) -> dict:
-        return tomllib.loads(self.path.read_text("utf-8"))
+        return tomllib.loads(self.path.read_text("utf-8-sig"))
 
     def _provider(self, d: dict) -> tuple[str | None, dict | None]:
         name = d.get("model_provider")
@@ -104,8 +104,9 @@ class CodexAdapter:
                         if not dry:
                             from .envrc import ensure_env_var
                             ensure_env_var(env_var, val)
+                        rc_name = "zshrc" if config.OS_NAME != "windows" else "setx"
                         diffs.append(
-                            f"  env {env_var} (zshrc): {config.redact(old_key)!r} -> "
+                            f"  env {env_var} ({rc_name}): {config.redact(old_key)!r} -> "
                             f"{config.redact(val)!r}")
                 else:
                     # literal api_key field in this file → write it in place

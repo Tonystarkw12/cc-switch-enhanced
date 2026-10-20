@@ -104,7 +104,7 @@ def status(only=None, exclude=None) -> None:
             state = "symlink (skip)"
         elif not p.exists():
             state = "missing"
-        elif START in p.read_text("utf-8"):
+        elif START in p.read_text("utf-8-sig"):
             state = "injected"
         else:
             state = "present, no block"
@@ -127,7 +127,7 @@ def apply(only=None, exclude=None, snippet: str | None = None, dry: bool = False
             print(f"  create  {aid:<11} {p}")
             changed += 1
             continue
-        txt = p.read_text("utf-8")
+        txt = p.read_text("utf-8-sig")
         if START in txt:
             new = _BLOCK_RE.sub(block, txt)
             if new != txt:
@@ -153,7 +153,7 @@ def remove(only=None, exclude=None, dry: bool = False) -> None:
     for aid, p in _scope(only, exclude):
         if not p.exists() or p.is_symlink():
             continue
-        txt = p.read_text("utf-8")
+        txt = p.read_text("utf-8-sig")
         if START not in txt:
             continue
         new = _BLOCK_RE.sub("", txt).rstrip() + "\n"

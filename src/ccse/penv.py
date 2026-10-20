@@ -28,7 +28,7 @@ def read_providers() -> dict[str, dict[str, str]]:
     p = _providers_path()
     if not p.exists():
         return {}
-    d = tomllib.loads(p.read_text("utf-8"))
+    d = tomllib.loads(p.read_text("utf-8-sig"))
     return {name: {k: v for k, v in section.items() if isinstance(v, str)}
             for name, section in d.items() if isinstance(section, dict)}
 
@@ -97,7 +97,7 @@ def status(root: Path, env_name: str = ".env") -> int:
     if not p.exists():
         print(f"({p} not found)", file=sys.stderr)
         return 0
-    for line in p.read_text("utf-8", errors="replace").splitlines():
+    for line in p.read_text("utf-8-sig", errors="replace").splitlines():
         s = line.strip()
         if not s or s.startswith("#") or "=" not in s:
             continue
@@ -135,7 +135,7 @@ def use(root: Path, name: str, model: str | None = None, prefix: str = "OPENAI_"
             changed.add(p)
 
     # re-read AFTER in-place rewrites — _rewrite_env may have just written main
-    main_text = main.read_text("utf-8", errors="replace") if main.exists() else ""
+    main_text = main.read_text("utf-8-sig", errors="replace") if main.exists() else ""
     have = {line.partition("=")[0].strip().upper()
             for line in main_text.splitlines()
             if line.strip() and not line.strip().startswith("#")

@@ -29,7 +29,7 @@ class JCodeAdapter:
         return self.path.exists()
 
     def _load(self) -> dict:
-        return tomllib.loads(self.path.read_text("utf-8"))
+        return tomllib.loads(self.path.read_text("utf-8-sig"))
 
     def _provider(self, d: dict) -> tuple[str | None, dict | None]:
         """Resolve the active provider block. Falls back to the first

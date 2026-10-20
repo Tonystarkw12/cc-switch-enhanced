@@ -807,7 +807,8 @@ class ReasonixAdapter:
                     if not dry:
                         from .envrc import ensure_env_var
                         ensure_env_var(var, relevant["api_key"])
-                    diffs.append(f"  env {var} (zshrc): {config.redact(old_key)!r} -> "
+                    rc_name = "zshrc" if config.OS_NAME != "windows" else "setx"
+                    diffs.append(f"  env {var} ({rc_name}): {config.redact(old_key)!r} -> "
                                  f"{config.redact(relevant['api_key'])!r}")
         if "default_model" in relevant and d.get("default_model") != relevant["default_model"]:
             diffs.append(f"  default_model: {d.get('default_model')!r} -> "
@@ -937,7 +938,8 @@ class GrokAdapter:
                 if not dry:
                     from .envrc import ensure_env_var
                     ensure_env_var(var, relevant["api_key"])
-                diffs.append(f"  env {var} (zshrc): {config.redact(old_key)!r} -> "
+                rc_name = "zshrc" if config.OS_NAME != "windows" else "setx"
+                diffs.append(f"  env {var} ({rc_name}): {config.redact(old_key)!r} -> "
                              f"{config.redact(relevant['api_key'])!r}")
         if diffs and not dry:
             text = tomlh.dump_toml(d)
@@ -1086,6 +1088,7 @@ class CrushAdapter:
     name = "Crush"
     primary = "crush.model"
     path = HOME / ".config" / "crush" / "crush.json"
+    snapshot_paths = (HOME / ".local" / "share" / "crush" / "providers.json",)
 
     @property
     def available(self):
@@ -2525,7 +2528,7 @@ def _dotenv_read(path: Path) -> dict[str, str]:
     vals: dict[str, str] = {}
     if path is None or not path.exists():
         return vals
-    for line in path.read_text("utf-8").splitlines():
+    for line in path.read_text("utf-8-sig").splitlines():
         s = line.strip()
         if not s or s.startswith("#") or "=" not in s:
             continue
@@ -2539,7 +2542,7 @@ def _dotenv_apply(path: Path, updates: dict[str, str], dry: bool) -> list[str]:
     appends missing keys, preserves comments and order (same approach as
     NMRagent's own admin console). Values are redacted in diffs; write is
     atomic and keeps the file mode."""
-    text = path.read_text("utf-8") if path.exists() else ""
+    text = path.read_text("utf-8-sig") if path.exists() else ""
     diffs: list[str] = []
     new_lines: list[str] = []
     seen: set[str] = set()
@@ -2583,7 +2586,7 @@ class NMRagentAdapter:
     id = "nmragent"
     name = "NMRagent"
     primary = "nmragent.model"
-    path = Path("/home/tony/NMRagent/backend/.env")
+    path = HOME / "NMRagent" / "backend" / ".env"
     model_raw = True
     _KEYS = {
         "model": "OPENAI_MODEL",
@@ -2647,7 +2650,7 @@ class GraphPulseAdapter:
     id = "graphpulse"
     name = "GraphPulse"
     primary = "graphpulse.model"
-    path = Path("/home/tony/graphpulse-master/.env.local")
+    path = HOME / "graphpulse-master" / ".env.local"
     model_raw = True
     _MODEL_KEYS = {"model": "GP_AI_MODEL", "frontend_model": "VITE_AI_MODEL"}
     _API_KEY_VAR = "NEWAPI_API_KEY"

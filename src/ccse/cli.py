@@ -126,7 +126,7 @@ def cmd_show(args) -> int:
 def _read_profiles() -> dict[str, dict[str, str]]:
     if not PROFILES_PATH.exists():
         return {}
-    d = tomllib.loads(PROFILES_PATH.read_text("utf-8"))
+    d = tomllib.loads(PROFILES_PATH.read_text("utf-8-sig"))
     out: dict[str, dict[str, str]] = {}
     for name, section in d.items():
         if not isinstance(section, dict):
@@ -394,7 +394,7 @@ def cmd_history(args) -> int:
             return 0
         print("(no apply history yet)", file=sys.stderr)
         return 0
-    rows = [json.loads(l) for l in config.HISTORY_INDEX.read_text("utf-8").splitlines()
+    rows = [json.loads(l) for l in config.HISTORY_INDEX.read_text("utf-8-sig").splitlines()
             if l.strip()]
     if getattr(args, "json", False):
         print(json.dumps(rows, ensure_ascii=False, indent=2))
@@ -806,7 +806,7 @@ def cmd_rules(args) -> int:
     elif getattr(args, "apply", False):
         snippet = None
         if getattr(args, "snippet", None):
-            snippet = Path(args.snippet).read_text("utf-8")
+            snippet = Path(args.snippet).read_text("utf-8-sig")
         rules.apply(args.only, args.exclude, snippet=snippet, dry=args.dry)
     else:
         rules.status(args.only, args.exclude)

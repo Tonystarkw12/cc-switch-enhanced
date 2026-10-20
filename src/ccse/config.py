@@ -42,16 +42,37 @@ def write_text_atomic(path: Path, text: str) -> None:
     mode = 0o644
     if path.exists():
         mode = stat.S_IMODE(os.stat(path).st_mode)
-    os.write(fd, text.encode("utf-8"))
-    os.close(fd)
-    os.chmod(tmp, mode)
-    os.replace(tmp, path)
+    try:
+        os.write(fd, text.encode("utf-8"))
+        os.close(fd)
+        try:
+            os.chmod(tmp, mode)
+        except OSError:
+            pass
+        try:
+            os.replace(tmp, path)
+        except PermissionError:
+            # Windows: os.replace may fail if target has hidden attribute or is locked
+            if path.exists():
+                try:
+                    path.unlink(missing_ok=True)
+                    os.replace(tmp, path)
+                except OSError:
+                    path.write_bytes(text.encode("utf-8"))
+            else:
+                raise
+    finally:
+        if os.path.exists(tmp):
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
 
 
 def load_json(path: Path) -> "dict | list | None":
     if not path.exists():
         return None
-    return json.loads(path.read_text("utf-8"))
+    return json.loads(path.read_text("utf-8-sig"))
 
 
 def dump_json(obj):
@@ -127,7 +148,7 @@ def restore_snapshot(stamp: str) -> list[str]:
     meta = snap / _SNAP_META
     if not meta.exists():
         die(f"snapshot {stamp!r} not found")
-    manifest = _json.loads(meta.read_text("utf-8"))
+    manifest = _json.loads(meta.read_text("utf-8-sig"))
     restored: list[str] = []
     for rel, target in manifest.items():
         src = snap / rel

@@ -600,8 +600,9 @@ def test_envrc_windows_user_env(tmp_path, monkeypatch):
     assert a.slots()[0].current == "gpt-5.6-terra"
     diffs = a.apply({"kimi_win.model": "glm-5.2[1M]"}, dry=False)
     assert diffs and calls == [("KIMI_MODEL_NAME", "glm-5.2[1M]")]
+    assert a.slots()[0].current == "glm-5.2[1M]"
     # already in sync → no setx, no false diff
-    diffs2 = a.apply({"kimi_win.model": "gpt-5.6-terra"}, dry=False)
+    diffs2 = a.apply({"kimi_win.model": "glm-5.2[1M]"}, dry=False)
     assert diffs2 == [] and len(calls) == 1
 
 
@@ -2346,3 +2347,215 @@ def test_mimo_roundtrip(tmp_path: Path, monkeypatch):
     assert d["provider"]["custom"]["options"]["baseURL"] == "http://10.0.0.5"
     assert d["provider"]["custom"]["options"]["apiKey"] == "sk-new"
     mi_mod.MimoAdapter.path = config.HOME / ".config" / "mimocode" / "mimocode.jsonc"
+
+
+def test_windows_bom_handling_all_formats(tmp_path: Path, monkeypatch):
+    """Windows: tools like PowerShell/Notepad write UTF-8 BOM (\\xef\\xbb\\xbf).
+    ccse must transparently decode JSON, TOML, dotenv, JSONC, and markdown."""
+    from ccse import config as cfg_mod, codex as codex_mod, jcode as jcode_mod
+    from ccse import penv as penv_mod, cli as cli_mod, mimo as mimo_mod
+    from ccse import gemini as gemini_mod, extra as extra_mod, rewrite as rw_mod
+    from ccse import rules as rules_mod
+
+    bom = b"\xef\xbb\xbf"
+
+    # 1. JSON
+    jf = tmp_path / "test.json"
+    jf.write_bytes(bom + b'{"model": "gpt-5.6-terra"}')
+    assert cfg_mod.load_json(jf) == {"model": "gpt-5.6-terra"}
+
+    # 2. Codex TOML
+    cf = tmp_path / "codex.toml"
+    cf.write_bytes(bom + b'model = "gpt-5.6-sol"\n[model_providers.custom]\nbase_url = "http://gw/v1"\n')
+    ca = codex_mod.CodexAdapter()
+    ca.path = cf
+    assert ca.slots()[0].current == "gpt-5.6-sol"
+
+    # 3. JCode TOML
+    jf2 = tmp_path / "jcode.toml"
+    jf2.write_bytes(bom + b'[provider]\ndefault_model = "newapi:gpt-5.6"\n')
+    ja = jcode_mod.JCodeAdapter()
+    ja.path = jf2
+    assert ja.slots()[0].current == "newapi:gpt-5.6"
+
+    # 4. penv providers.toml
+    pf = tmp_path / "providers.toml"
+    pf.write_bytes(bom + b'[gw]\nbase_url = "http://gw/v1"\nmodel = "m1"\n')
+    monkeypatch.setattr(penv_mod, "_providers_path", lambda: pf)
+    provs = penv_mod.read_providers()
+    assert "gw" in provs and provs["gw"]["model"] == "m1"
+
+    # 5. cli profiles.toml
+    prof_f = tmp_path / "profiles.toml"
+    prof_f.write_bytes(bom + b'[testprof]\n"claude.model" = "m-test"\n')
+    monkeypatch.setattr(cli_mod, "PROFILES_PATH", prof_f)
+    profs = cli_mod._read_profiles()
+    assert profs.get("testprof", {}).get("claude.model") == "m-test"
+
+    # 6. Mimo JSONC
+    mf = tmp_path / "mimo.jsonc"
+    mf.write_bytes(bom + b'{\n  // comment\n  "model": "custom/mimo-model"\n}\n')
+    ma = mimo_mod.MimoAdapter()
+    ma.path = mf
+    assert ma.slots()[0].current == "custom/mimo-model"
+
+    # 7. Gemini .env
+    gf = tmp_path / "gemini.env"
+    gf.write_bytes(bom + b'GEMINI_MODEL=gemini-1.5-pro\nGOOGLE_GEMINI_BASE_URL=http://gw\n')
+    ga = gemini_mod.GeminiAdapter()
+    ga.path = gf
+    assert ga.slots()[0].current == "gemini-1.5-pro"
+    ga.apply({"gemini.model": "gemini-2.0"}, dry=False)
+    assert "GEMINI_MODEL=gemini-2.0" in gf.read_text("utf-8-sig")
+
+    # 8. extra._dotenv_read and _dotenv_apply
+    df = tmp_path / "test.env"
+    df.write_bytes(bom + b'OPENAI_MODEL=old-model\nOPENAI_BASE_URL=http://old/v1\n')
+    vals = extra_mod._dotenv_read(df)
+    assert vals.get("OPENAI_MODEL") == "old-model"
+    extra_mod._dotenv_apply(df, {"OPENAI_MODEL": "new-model"}, dry=False)
+    txt = df.read_text("utf-8-sig")
+    assert "OPENAI_MODEL=new-model" in txt
+    assert "old-model" not in txt  # replaced in place, no duplicate key
+
+    # 9. rewrite._rewrite_env
+    rf = tmp_path / "rewrite.env"
+    rf.write_bytes(bom + b'OPENAI_MODEL=old-m\n')
+    rw_mod._rewrite_env(rf, {"model": "new-m"}, dry=False)
+    assert "OPENAI_MODEL=new-m" in rf.read_text("utf-8-sig")
+
+    # 10. rules snippet
+    sf = tmp_path / "snippet.md"
+    sf.write_bytes(bom + b'# custom rules\n')
+    rf2 = tmp_path / "agents.md"
+    rf2.write_bytes(bom + b'# initial\n')
+    rules_mod.apply(only="claude", snippet=sf.read_text("utf-8-sig"), dry=False)
+
+
+def test_windows_envrc_immediate_visibility(monkeypatch):
+    """Windows: make_envrc_adapter and ensure_env_var must update os.environ
+    so slots() and subsequent calls see the applied value immediately."""
+    from ccse import envrc as envrc_mod, config as cfg_mod
+
+    monkeypatch.setattr(cfg_mod, "OS_NAME", "windows", raising=False)
+    monkeypatch.setattr(cfg_mod, "SHELL_RC", None, raising=False)
+
+    calls = []
+    monkeypatch.setattr(envrc_mod, "_setx", lambda var, val: calls.append((var, val)) or True)
+    monkeypatch.delenv("WIN_TEST_MODEL", raising=False)
+
+    cls = envrc_mod.make_envrc_adapter("wintest", "Win Test", {"model": "WIN_TEST_MODEL"})
+    a = cls()
+    assert a.available is True
+    assert a.slots()[0].current is None
+
+    # apply updates os.environ immediately
+    diffs = a.apply({"wintest.model": "gpt-5.6"}, dry=False)
+    assert diffs == ["  env WIN_TEST_MODEL: None -> 'gpt-5.6'"]
+    assert calls == [("WIN_TEST_MODEL", "gpt-5.6")]
+    assert a.slots()[0].current == "gpt-5.6"
+
+    # ensure_env_var updates os.environ as well
+    ch = envrc_mod.ensure_env_var("WIN_TEST_MODEL", "gpt-6.0")
+    assert ch == ("gpt-5.6", "gpt-6.0")
+    assert a.slots()[0].current == "gpt-6.0"
+
+
+def test_windows_envrc_winreg_fallback(monkeypatch):
+    """Windows: _get_env falls back to HKCU\\Environment if not in os.environ."""
+    import sys
+    from ccse import envrc as envrc_mod
+
+    monkeypatch.delenv("WINREG_TEST_VAR", raising=False)
+    # mock winreg
+    class FakeKey:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+    fake_reg = {
+        "OpenKey": lambda hkey, subkey: FakeKey(),
+        "QueryValueEx": lambda key, var: ("winreg-val", 1) if var == "WINREG_TEST_VAR" else (_ for _ in ()).throw(OSError),
+        "HKEY_CURRENT_USER": 1,
+    }
+    monkeypatch.setattr(sys, "platform", "win32")
+    import types
+    fake_mod = types.ModuleType("winreg")
+    for k, v in fake_reg.items():
+        setattr(fake_mod, k, v)
+    monkeypatch.setitem(sys.modules, "winreg", fake_mod)
+
+    assert envrc_mod._get_env("WINREG_TEST_VAR") == "winreg-val"
+
+
+def test_windows_atomic_write_resilience(tmp_path: Path, monkeypatch):
+    """write_text_atomic cleans up tmp files on error and recovers from PermissionError."""
+    from ccse import config as cfg_mod
+    import os
+
+    f = tmp_path / "target.txt"
+    f.write_text("initial")
+
+    # 1. Successful write
+    cfg_mod.write_text_atomic(f, "updated")
+    assert f.read_text() == "updated"
+    assert len(list(tmp_path.glob(".*.tmp"))) == 0  # no leaked tmp files
+
+    # 2. PermissionError recovery
+    orig_replace = os.replace
+    call_count = [0]
+    def mock_replace(src, dst):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            raise PermissionError("WinError 5 Access is denied")
+        return orig_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", mock_replace)
+    cfg_mod.write_text_atomic(f, "recovered")
+    assert f.read_text() == "recovered"
+    assert len(list(tmp_path.glob(".*.tmp"))) == 0
+
+
+def test_windows_diff_messages(tmp_path: Path, monkeypatch):
+    """Windows: codex, reasonix and grok report (setx) instead of (zshrc)."""
+    from ccse import config as cfg_mod, codex as codex_mod
+    from ccse import extra as extra_mod, envrc as envrc_mod
+
+    monkeypatch.setattr(cfg_mod, "OS_NAME", "windows", raising=False)
+    monkeypatch.setattr(cfg_mod, "SHELL_RC", None, raising=False)
+    monkeypatch.setattr(envrc_mod, "_setx", lambda var, val: True)
+
+    # 1. codex
+    cf = tmp_path / "codex.toml"
+    cf.write_text('model = "m1"\nmodel_provider = "custom"\n[model_providers.custom]\nbase_url = "http://a"\nenv_key = "MY_KEY"\n')
+    ca = codex_mod.CodexAdapter()
+    ca.path = cf
+    diffs = ca.apply({"codex.api_key": "sk-new"}, dry=False)
+    assert any("(setx)" in d for d in diffs)
+    assert not any("(zshrc)" in d for d in diffs)
+
+    # 2. reasonix
+    rf = tmp_path / "reasonix.toml"
+    rf.write_text('default_model = "prov1"\n[[providers]]\nname = "prov1"\nmodel = "m1"\napi_key_env = "REASONIX_KEY"\n')
+    ra = extra_mod.ReasonixAdapter()
+    ra.path = rf
+    diffs2 = ra.apply({"reasonix.api_key": "sk-new"}, dry=False)
+    assert any("(setx)" in d for d in diffs2)
+    assert not any("(zshrc)" in d for d in diffs2)
+
+    # 3. grok
+    gf = tmp_path / "grok.toml"
+    gf.write_text('[models]\ndefault = "m1"\n[model.m1]\nmodel = "m1"\nenv_key = "GROK_KEY"\n')
+    ga = extra_mod.GrokAdapter()
+    ga.path = gf
+    diffs3 = ga.apply({"grok.api_key": "sk-new"}, dry=False)
+    assert any("(setx)" in d for d in diffs3)
+    assert not any("(zshrc)" in d for d in diffs3)
+
+
+def test_windows_paths_relative_to_home():
+    """NMRagent and GraphPulse must resolve path relative to HOME, not hardcoded /home/tony."""
+    from ccse import extra as extra_mod, config as cfg_mod
+
+    assert extra_mod.NMRagentAdapter.path.parts[-3:] == ("NMRagent", "backend", ".env")
+    assert extra_mod.GraphPulseAdapter.path.parts[-2:] == ("graphpulse-master", ".env.local")
+    assert extra_mod.CrushAdapter.snapshot_paths == (extra_mod.HOME / ".local" / "share" / "crush" / "providers.json",)
+
