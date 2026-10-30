@@ -3,9 +3,64 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>ccse — 一行命令，切换全部 53 个 AI 编程助手</title>
-  <meta name="description" content="ccse 为 53 个 AI 编程助手同时切换模型、中转地址与 API Key：写前自动快照、verify 端点探测、subagent 智能跟随、undo 一键回滚。">
+  <title>ccse — 一行命令，切换全部 53 个 AI 编程助手配置</title>
+  <meta name="description" content="ccse (CC Switch Enhanced) 为 53 个 AI 编程助手同时切换模型、中转地址与 API Key：写前自动快照、verify 端点探测、subagent 智能跟随、undo 一键回滚。">
+  <meta name="keywords" content="ccse, cc-switch-enhanced, AI编程助手, Claude Code, Codex, OpenCode, Aider, Trae, Devin, 模型切换, API Key配置, 中转地址切换, 命令行工具">
+  <meta name="author" content="Tonystarkw12">
   <meta name="theme-color" content="#070709">
+  <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1">
+
+  <!-- Open Graph / Facebook -->
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="ccse - CC Switch Enhanced">
+  <meta property="og:title" content="ccse — 一行命令，切换全部 53 个 AI 编程助手配置">
+  <meta property="og:description" content="ccse (CC Switch Enhanced) 为 53 个 AI 编程助手同时切换模型、中转地址与 API Key：写前自动快照、verify 端点探测、subagent 智能跟随、undo 一键回滚。">
+  <meta property="og:image" content="poster.jpg">
+  <meta property="og:locale" content="zh_CN">
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="ccse — 一行命令，切换全部 53 个 AI 编程助手配置">
+  <meta name="twitter:description" content="ccse 为 53 个 AI 编程助手同时切换模型、中转地址与 API Key：写前自动快照、verify 端点探测、subagent 智能跟随、undo 一键回滚。">
+  <meta name="twitter:image" content="poster.jpg">
+
+  <!-- Schema.org JSON-LD (SoftwareApplication & CLI Tool for GEO/SEO) -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "SoftwareApplication",
+        "@id": "#software",
+        "name": "cc-switch-enhanced",
+        "alternateName": "ccse",
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "Linux, macOS, Windows",
+        "description": "一行命令为 53 个主流 AI 编程助手（Claude Code, Codex, OpenCode, Gemini, Trae, Devin, Aider 等）批量配置与切换模型、API Key 和 Base URL。纯本地运行，原生支持写前快照与秒级回滚。",
+        "url": "https://github.com/Tonystarkw12/cc-switch-enhanced",
+        "downloadUrl": "https://github.com/Tonystarkw12/cc-switch-enhanced/releases",
+        "license": "https://opensource.org/licenses/MIT",
+        "author": {
+          "@type": "Person",
+          "name": "Tonystarkw12",
+          "url": "https://github.com/Tonystarkw12"
+        },
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "USD"
+        },
+        "featureList": [
+          "覆盖 53 个主流 AI 编程助手的底层配置读写",
+          "写前自动毫秒级快照备份与 undo 一键回滚机制",
+          "内置 verify 自动化端点存活与模型可用性探测",
+          "subagent 智能环境跟随与多账号环境隔离",
+          "无后台守护进程，零网络依赖纯本地 CLI 工具"
+        ]
+      }
+    ]
+  }
+  </script>
   <link rel="stylesheet" href="tokens.css">
   <link rel="stylesheet" href="styles.css">
 </head>
@@ -23,6 +78,7 @@
         ccse
       </a>
       <ul class="nav-links">
+        <li><a class="nav-link" href="#video">宣传片</a></li>
         <li><a class="nav-link" href="#features">特性</a></li>
         <li><a class="nav-link" href="#terminal">交互演示</a></li>
         <li><a class="nav-link" href="#adapters">适配列表</a></li>
@@ -58,6 +114,9 @@
           <button class="btn-shiny" type="button" data-copy="uv tool install git+https://github.com/Tonystarkw12/cc-switch-enhanced">
             <span>⚡ 复制一键安装命令</span>
           </button>
+          <a class="btn-glass btn-glass--video" href="#video">
+            <span>▶ 50s 概念宣传片</span>
+          </a>
           <a class="btn-glass" href="https://github.com/Tonystarkw12/cc-switch-enhanced" target="_blank" rel="noopener">
             <span>⭐ Star on GitHub</span>
           </a>
@@ -123,6 +182,37 @@
           </div>
         </div>
 
+      </div>
+    </section>
+
+    <!-- Video Showcase Section -->
+    <section class="sec sec--video" id="video">
+      <div class="wrap">
+        <header class="sec-head">
+          <span class="sec-tag">Official Demo</span>
+          <h2 class="sec-title">50 秒带你极速看懂 ccse</h2>
+          <p class="sec-desc">Remotion 渲染官方高清概念片：看 ccse 如何在毫秒间完成 53 个 AI 编程助手原生配置并发重写与端点探活。</p>
+        </header>
+
+        <div class="video-card spotlight-card">
+          <div class="video-header">
+            <div class="video-dots" aria-hidden="true">
+              <span class="dot dot-red"></span>
+              <span class="dot dot-yellow"></span>
+              <span class="dot dot-green"></span>
+            </div>
+            <div class="video-title">
+              <span>ccse-promo.mp4 · 1080p 60fps</span>
+            </div>
+            <span class="video-tag">50s HD</span>
+          </div>
+          <div class="video-player-wrap">
+            <video id="promo-video" controls playsinline preload="metadata" poster="poster.jpg">
+              <source src="ccse-promo.mp4" type="video/mp4">
+              您的浏览器不支持 HTML5 视频播放。
+            </video>
+          </div>
+        </div>
       </div>
     </section>
 

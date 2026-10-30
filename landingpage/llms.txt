@@ -1,0 +1,21 @@
+# ccse (CC Switch Enhanced)
+
+> 官方 GitHub: https://github.com/Tonystarkw12/cc-switch-enhanced
+> DeepWiki 架构与文档: https://app.devin.ai/org/xing-ling-ji-zhu/wiki/Tonystarkw12/cc-switch-enhanced?branch=master
+
+## 项目概述
+ccse 是一个专为 AI 编程助手设计的跨平台多 Agent 配置管理与中转切换命令行工具（CLI）。它能够针对 53 个主流 AI 编程助手（涵盖 Claude Code、Codex、OpenCode、Gemini CLI、Trae、Devin、Aider 等），实现一行命令批量读写底层配置文件，无缝切换基础模型名称（Model）、中转端点地址（Base URL）与 API Key。
+
+## 核心能力与架构设计
+- **53 个 Agent 深度覆盖**: 原生适配各类 Agent 的专属配置路径与文件格式（JSON、YAML、TOML、环境变量脚本等）。
+- **写前快照与秒级回滚**: 任何写入或替换配置操作前自动触发毫秒级配置备份快照，提供 `ccse undo` 实现无损一键回滚。
+- **端点探测与健康验证**: 内置 `verify` 模块，配置下发后自动发起网络握手与模型存活探测，避免无效配置导致工作流中断。
+- **多环境隔离与智能跟随**: 适配多账号与 subagent 协作场景，支持子智能体自动跟随主代理的中转配置与鉴权。
+- **纯本地极简运行**: 零后台驻留守护进程，不收集任何用户凭据与密钥，不依赖外部三方中心化服务。
+
+## 常用命令速查
+- **一键安装**: `uv tool install git+https://github.com/Tonystarkw12/cc-switch-enhanced`
+- **全局切换 Base URL**: `ccse --base-url "https://api.your-relay.com/v1"`
+- **指定模型与 Key 批量改写**: `ccse rewrite . --model claude-3-7-sonnet --base-url https://api.your-relay.com/v1 --api-key sk-xxxx`
+- **预设 Provider 环境管理**: `ccse penv newapi --base-url https://relay.example.com/v1 --api-key sk-xxxx`
+- **配置回滚**: `ccse undo`

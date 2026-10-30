@@ -324,6 +324,67 @@ def test_jcode_roundtrip(tmp_path: Path, monkeypatch):
     jc_mod.JCodeAdapter.path = config.HOME / ".jcode" / "config.toml"
 
 
+def test_rules_cover_all_adapters():
+    """Every registered adapter must be either injectable (INSTRUCTION_FILES,
+    grounded global instructions path) or documented (EXCLUDED with reason) —
+    new adapters fail here until `ccse rules` coverage is decided."""
+    from ccse.cli import _load_adapters
+    from ccse import rules
+    from ccse.registry import REGISTRY
+    _load_adapters()
+    untracked = [aid for aid in REGISTRY
+                 if aid not in rules.INSTRUCTION_FILES and aid not in rules.EXCLUDED]
+    assert not untracked, f"adapters missing from rules coverage: {untracked}"
+
+
+def test_rules_skip_absent_agent_dir(tmp_path: Path, monkeypatch, capsys):
+    """apply must not create instruction files for agents that were never
+    installed (parent dir absent) — no $HOME litter; an agent with an
+    existing config dir still gets its file created. Runs hermetically:
+    the whole INSTRUCTION_FILES map is replaced so real agent files are
+    never touched."""
+    from ccse import rules
+    ghost = tmp_path / "ghost-home" / "AGENTS.md"      # parent absent
+    live = tmp_path / "live-home" / "AGENTS.md"        # parent exists
+    live.parent.mkdir()
+    monkeypatch.setattr(rules, "INSTRUCTION_FILES",
+                        {"grok": ghost, "qwen": live})  # non-protected ids
+    rules.apply(snippet="RULE BODY")
+    assert not ghost.exists() and not ghost.parent.exists()
+    assert live.exists() and "RULE BODY" in live.read_text()
+    out = capsys.readouterr().out
+    assert "agent not installed" in out
+    # dry-run behaves the same for the ghost
+    rules.apply(snippet="RULE BODY", dry=True)
+    assert not ghost.exists()
+
+
+def test_rules_protect_primaries(tmp_path: Path, monkeypatch, capsys):
+    """PROTECTED primaries (claude/zcode/codex/opencode/prime) are frozen:
+    apply/remove skip them by default, an explicit --only <id> overrides."""
+    from ccse import rules
+    prim = tmp_path / "prim.md"
+    side = tmp_path / "side.md"
+    for f in (prim, side):
+        f.write_text("base\n")
+        f.parent.mkdir(exist_ok=True)
+    monkeypatch.setattr(rules, "INSTRUCTION_FILES",
+                        {"claude": prim, "qwen": side})  # hermetic scope
+    rules.apply(snippet="RULE BODY")                  # default: skip primary
+    assert "RULE BODY" in side.read_text()
+    assert "RULE BODY" not in prim.read_text()
+    assert "protected" in capsys.readouterr().out
+    rules.apply(only="claude", snippet="RULE BODY")   # explicit override
+    assert "RULE BODY" in prim.read_text()
+    prim_txt = prim.read_text()
+    rules.remove()                                    # default: primary kept
+    assert rules.START in prim.read_text()
+    assert rules.START not in side.read_text()
+    rules.remove(only="claude")                       # explicit override
+    assert prim.read_text().rstrip() == "base"
+    assert prim_txt != prim.read_text()
+
+
 def test_rules_inject_remove(tmp_path: Path, monkeypatch):
     """`ccse rules`: idempotent marked-block inject into an agent's global
     instructions file, update on changed snippet, remove restores original."""
@@ -347,27 +408,59 @@ def test_rules_inject_remove(tmp_path: Path, monkeypatch):
 
 
 def test_dsh_roundtrip(tmp_path: Path, monkeypatch):
-    """DSH: model writes agentDefaultModel.model in settings.yaml, preserving
-    the existing ui-onboarding section; provider defaults on a fresh section;
+    """DSH 0.2: model writes the agent-default-model entry into the home
+    cordis.patch.yml (applies to every profile), provider detected from
+    profile patches when they agree; existing comments preserved;
     idempotent."""
     import ruamel.yaml as _y
     from ccse import dsh as dsh_mod
-    cfg = tmp_path / "settings.yaml"
-    cfg.write_text("ui-onboarding:\n  welcomeNoticeVersion: 2026-08-13.1\n")
-    dsh_mod.DshAdapter.path = cfg  # type: ignore[misc]
+    monkeypatch.setattr(config, "HOME", tmp_path, raising=False)
+    (tmp_path / ".dsh").mkdir()
+    (tmp_path / ".dsh" / "profiles" / "web").mkdir(parents=True)
+    (tmp_path / ".dsh" / "profiles" / "web" / "cordis.patch.yml").write_text(
+        "# profile patch\n"
+        "- id: agent-default-model\n"
+        '  name: "@deepseek-ai/dsh-agent-default-model"\n'
+        "  config:\n"
+        "    provider: opencodego\n"
+        "    model: qwen3.8:27b\n")
+    cfg = tmp_path / ".dsh" / "cordis.patch.yml"
+    cfg.write_text("# home patch layer: keep comments\n[]\n")
+    monkeypatch.setattr(dsh_mod.DshAdapter, "path", cfg)
+
     a = dsh_mod.DshAdapter()
-    assert a.slots()[0].current is None  # agentDefaultModel absent
+    assert a.available
+    assert a.slots()[0].current is None  # home layer empty
     diffs = a.apply({"dsh.model": "glm-5.2"}, dry=False)
     assert diffs and "glm-5.2" in diffs[0]
     doc = _y.YAML().load(cfg.read_text("utf-8"))
-    assert doc["agentDefaultModel"]["model"] == "glm-5.2"
-    assert doc["agentDefaultModel"]["provider"] == "deepseek-official"  # defaulted
-    assert doc["ui-onboarding"]["welcomeNoticeVersion"] == "2026-08-13.1"  # preserved
+    entry = doc[0]
+    assert entry["id"] == "agent-default-model"
+    assert entry["config"]["model"] == "glm-5.2"
+    assert entry["config"]["provider"] == "opencodego"  # from web profile patch
+    assert "# home patch layer: keep comments" in cfg.read_text()
     # idempotent
     assert a.apply({"dsh.model": "glm-5.2"}, dry=False) == []
     # slot now reflects written value
     assert a.slots()[0].current == "glm-5.2"
-    dsh_mod.DshAdapter.path = config.HOME / ".dsh" / "settings.yaml"
+
+    # existing home entry: model updated in place, provider kept
+    a.apply({"dsh.model": "grok-4.7"}, dry=False)
+    doc = _y.YAML().load(cfg.read_text("utf-8"))
+    assert doc[0]["config"]["model"] == "grok-4.7"
+    assert doc[0]["config"]["provider"] == "opencodego"
+
+    # disagreeing profile patches -> bundle default provider
+    (tmp_path / ".dsh" / "profiles" / "tui").mkdir()
+    (tmp_path / ".dsh" / "profiles" / "tui" / "cordis.patch.yml").write_text(
+        "- id: agent-default-model\n"
+        "  config:\n"
+        "    provider: someother\n"
+        "    model: x\n")
+    cfg.write_text("[]\n")
+    a.apply({"dsh.model": "glm-5.2"}, dry=False)
+    doc = _y.YAML().load(cfg.read_text("utf-8"))
+    assert doc[0]["config"]["provider"] == "deepseek-official"
 
 
 def test_openclaude_roundtrip(tmp_path: Path, monkeypatch):

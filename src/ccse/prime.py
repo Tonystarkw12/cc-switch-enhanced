@@ -16,6 +16,7 @@ Reuses no ClaudeAdapter logic — the config semantics are different.
 from __future__ import annotations
 
 import json
+import os
 import re
 
 from . import config
@@ -83,8 +84,69 @@ class PrimeAdapter:
                             current=prov.get("apiKey"), kind=KIND_API_KEY))
         return out
 
+    @staticmethod
+    def _follow_recent_models(s: dict, old_model: str | None, new_model: str,
+                              pname: str | None) -> str | None:
+        """recentModels entries carry `provider/model`: rewrite refs to the old
+        model, keep the new one at the front. Mutates s; returns a diff line
+        (None when recentModels is absent/not a list)."""
+        rm = s.get("recentModels")
+        if not isinstance(rm, list):
+            return None
+        prefix = f"{pname or 'newapi'}/"
+        for i, item in enumerate(rm):
+            if isinstance(item, str) and item.split("/")[-1] == old_model:
+                rm[i] = prefix + new_model
+        if not any(isinstance(i, str) and i.split("/")[-1] == new_model
+                   for i in rm):
+            rm.insert(0, prefix + new_model)
+        return f"  recentModels: -> {prefix}{new_model}"
+
+    @staticmethod
+    def _sync_provider_catalog(prov: dict, pname: str | None,
+                               new_model: str) -> tuple[list[str], bool]:
+        """Keep the active provider's models[0] on the target model — the
+        status bar shows `name`, not `id`, so both follow. Mutates prov;
+        returns (diffs, dirty)."""
+        diffs: list[str] = []
+        models_list = prov.setdefault("models", [])
+        new_name = new_model.replace("-", " ").title()
+        if models_list and isinstance(models_list[0], dict) \
+                and models_list[0].get("id") != new_model:
+            models_list[0]["id"] = new_model  # first entry = default
+            models_list[0]["name"] = new_name  # keep name in sync with id
+            diffs.append(f"  providers[{pname}].models[0].id/name -> {new_model!r}")
+            return diffs, True
+        if models_list and isinstance(models_list[0], dict) \
+                and models_list[0].get("name") != new_name:
+            models_list[0]["name"] = new_name  # id already current, name stale
+            diffs.append(f"  providers[{pname}].models[0].name -> {new_name!r}")
+            return diffs, True
+        if not models_list:
+            models_list.insert(0, {"id": new_model, "name": new_model})
+            diffs.append(f"  providers[{pname}].models[0].id -> {new_model!r}")
+            return diffs, True
+        return diffs, False
+
+    @staticmethod
+    def _inline_env_api_key(prov: dict, pname: str | None,
+                            dry: bool) -> tuple[str | None, bool]:
+        """models.json apiKey holds the LITERAL key (pi-family format — pi's
+        own models.json stores literals; an env-var name here is sent verbatim
+        as the bearer and the gateway 401s). Inline a bare env-var name when
+        that variable is set. Returns (diff line, mutated)."""
+        cur_key = prov.get("apiKey")
+        if not (isinstance(cur_key, str) and _ENV_NAME_RE.fullmatch(cur_key)):
+            return None, False
+        lit = os.environ.get(cur_key)
+        if not lit:
+            return None, False
+        if not dry:
+            prov["apiKey"] = lit
+        return (f"  providers[{pname}].apiKey: {cur_key!r} -> "
+                f"{config.redact(lit)!r} (env inlined)"), not dry
+
     def apply(self, assignments: dict[str, str], dry: bool) -> list[str]:
-        import os
         relevant = {k[len("prime."):]: v for k, v in assignments.items()
                     if k.startswith("prime.")}
         if not relevant or not self.available:
@@ -115,37 +177,16 @@ class PrimeAdapter:
             if not dry:
                 s["defaultModel"] = new_model
                 s_dirty = True
-                rm = s.get("recentModels")
-                if isinstance(rm, list):
-                    for i, item in enumerate(rm):
-                        if isinstance(item, str) and item.split("/")[-1] == old_model:
-                            rm[i] = f"{pname or 'newapi'}/{new_model}"
-                    if not any(isinstance(i, str) and i.split("/")[-1] == new_model
-                               for i in rm):
-                        rm.insert(0, f"{pname or 'newapi'}/{new_model}")
-                    diffs.append(f"  recentModels: -> {pname or 'newapi'}/{new_model}")
+                rm_diff = self._follow_recent_models(s, old_model, new_model, pname)
+                if rm_diff:
+                    diffs.append(rm_diff)
 
         # 2. models.json — active provider: model catalog + endpoint
         if prov is not None:
             if new_model is not None:  # run even when settings already in sync
-                models_list = prov.setdefault("models", [])
-                new_name = new_model.replace("-", " ").title()
-                if models_list and isinstance(models_list[0], dict) \
-                        and models_list[0].get("id") != new_model:
-                    models_list[0]["id"] = new_model  # first entry = default
-                    # status bar shows `name`, not `id` — keep them in sync
-                    models_list[0]["name"] = new_name
-                    diffs.append(f"  providers[{pname}].models[0].id/name -> {new_model!r}")
-                    m_dirty = True
-                elif models_list and isinstance(models_list[0], dict) \
-                        and models_list[0].get("name") != new_name:
-                    models_list[0]["name"] = new_name  # id already current, name stale
-                    diffs.append(f"  providers[{pname}].models[0].name -> {new_name!r}")
-                    m_dirty = True
-                elif not models_list:
-                    models_list.insert(0, {"id": new_model, "name": new_model})
-                    diffs.append(f"  providers[{pname}].models[0].id -> {new_model!r}")
-                    m_dirty = True
+                cat_diffs, dirty = self._sync_provider_catalog(prov, pname, new_model)
+                diffs.extend(cat_diffs)
+                m_dirty = m_dirty or dirty
             if "base_url" in relevant:
                 base_url = config.ensure_openai_v1(relevant["base_url"])
                 if prov.get("baseUrl") != base_url:
@@ -154,19 +195,10 @@ class PrimeAdapter:
                     if not dry:
                         prov["baseUrl"] = base_url
                         m_dirty = True
-            # models.json apiKey holds the LITERAL key (pi-family format —
-            # pi's own models.json stores literals; an env-var name here is
-            # sent verbatim as the bearer and the gateway 401s). Inline a
-            # bare env-var name when that variable is set.
-            cur_key = prov.get("apiKey")
-            if isinstance(cur_key, str) and _ENV_NAME_RE.fullmatch(cur_key):
-                lit = os.environ.get(cur_key)
-                if lit:
-                    diffs.append(f"  providers[{pname}].apiKey: {cur_key!r} -> "
-                                 f"{config.redact(lit)!r} (env inlined)")
-                    if not dry:
-                        prov["apiKey"] = lit
-                        m_dirty = True
+            env_diff, mutated = self._inline_env_api_key(prov, pname, dry)
+            if env_diff:
+                diffs.append(env_diff)
+                m_dirty = m_dirty or mutated
             if "api_key" in relevant and prov.get("apiKey") != relevant["api_key"]:
                 diffs.append(f"  providers[{pname}].apiKey: "
                              f"{config.redact(prov.get('apiKey'))!r} -> "

@@ -5,18 +5,18 @@
 # cc-switch-enhanced
 
 **The fleet-wide model switcher for AI coding agents.**
-一行命令，为 38 个 AI 编程助手同时切换模型 / 中转地址 / API key —— 含 subagent、端点探测与一键回滚。
+一行命令，为 53 个 AI 编程助手同时切换模型 / 中转地址 / API key —— 含 subagent、端点探测与一键回滚。
 
 [![license](https://img.shields.io/badge/license-MIT-blue)](#)
 [![python](https://img.shields.io/badge/python-%E2%89%A53.11-green)](#)
 [![platform](https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20win-lightgrey)](#)
 [![deps](https://img.shields.io/badge/deps-stdlib%20first%20%2B%202-success)](#)
-[![agents](https://img.shields.io/badge/adapters-38-orange)](#)
+[![agents](https://img.shields.io/badge/adapters-53-orange)](#)
 [![docs](https://img.shields.io/badge/docs-DeepWiki-8b5cf6)](https://app.devin.ai/org/xing-ling-ji-zhu/wiki/Tonystarkw12/cc-switch-enhanced?branch=master)
 
 **Why** — 换一个聚合 API（NewAPI / omniroute / 百炼 / 镜像站），模型名、端点、key 全变。GUI 工具适配面窄，手动逐个改配置既慢又易错。`ccse` 把整条切换链路自动化：**改 → 校验 → 可回滚**。
 
-**[快速开始](#tldr)** · **[DeepWiki 文档](https://app.devin.ai/org/xing-ling-ji-zhu/wiki/Tonystarkw12/cc-switch-enhanced?branch=master)** · **[适配列表](#adapter-覆盖38-个)**
+**[快速开始](#tldr)** · **[DeepWiki 文档](https://app.devin.ai/org/xing-ling-ji-zhu/wiki/Tonystarkw12/cc-switch-enhanced?branch=master)** · **[适配列表](#adapter-覆盖53-个)**
 
 </div>
 
@@ -35,7 +35,7 @@
 - [安装](#安装)
 - [`ccse rules` —— 行为注入（caveman + rtk）](#ccse-rules--行为注入caveman--rtk)
 - [profile —— 多槽位配方](#profile--多槽位配方)
-- [adapter 覆盖（38 个）](#adapter-覆盖38-个)
+- [adapter 覆盖（53 个）](#adapter-覆盖53-个)
 - [verify —— 换完确认没改坏](#verify--换完确认没改坏)
 - [rewrite —— 项目内一键切 LLM 配置](#rewrite--项目内一键切-llm-配置)
 - [penv —— 项目 .env 一键换提供商](#penv--项目-env-一键换提供商)
@@ -94,10 +94,10 @@ uv tool install .        # 或 pipx install . ；升级加 --force
 
 ## `ccse rules` —— 行为注入（caveman + rtk）
 
-模型 / base_url / key 是 ccse 的**结构化切换面**；输出风格和命令输出路由是**行为**，只有 agent 启动时读进去才生效。`ccse rules` 把一段行为 snippet（内置 caveman full + rtk 路由）注入到每个 agent 的**全局指令文件**（`AGENTS.md` / `CLAUDE.md` / `GEMINI.md` / openakita 的 `AGENT.md`），让一行命令把全 fleet 的行为统一切掉——和 `--model` 切模型一个套路。
+模型 / base_url / key 是 ccse 的**结构化切换面**；输出风格和命令输出路由是**行为**，只有 agent 启动时读进去才生效。`ccse rules` 把一段行为 snippet（内置 caveman full + rtk 路由）注入到每个 agent 的**全局指令文件**（`AGENTS.md` / `CLAUDE.md` / `GEMINI.md` / openakita 的 `AGENT.md`；ante `~/.ante/AGENTS.md`、commandcode `~/.commandcode/AGENTS.md`、openclaude `~/.openclaude/CLAUDE.md`、dsh `~/.dsh/AGENTS.md` 均有实证路径），让一行命令把全 fleet 的行为统一切掉——和 `--model` 切模型一个套路。
 
 ```bash
-ccse rules                          # 看每个 agent 注入状态
+ccse rules                          # 看每个 agent 注入状态（含排除原因）
 ccse rules --apply                  # 注入内置 caveman+rtk（默认全部 agent）
 ccse rules --apply --only codex,opencode --dry
 ccse rules --apply --snippet ~/.myrules.md    # 用自定义 snippet
@@ -105,7 +105,9 @@ ccse rules --rm                     # 移除注入的标记块（还原原文件
 ```
 
 - **幂等**：用 `<!-- ccse:caveman-rtk:START/END -->` 标记块包裹，重跑只更新不重复；`--rm` 干净移除，原文件其余内容不动。
-- **覆盖 25 个**（含 claude → `CLAUDE.md`、gemini → `GEMINI.md`、openakita → `identity/AGENT.md`、mu → `~/.mu/AGENTS.md`）；kimi/copaw 纯 env 无指令面，排除。
+- **全覆盖**：29 个可注入（含 claude → `CLAUDE.md`、gemini → `GEMINI.md`、openakita → `identity/AGENT.md`）；其余 adapter 记入排除清单并注明原因（env-only / 规则面仅项目级 / agent 自管状态 / agy 复用 `~/.gemini/GEMINI.md`），状态输出全部可见。
+- **主力保护**：claude / zcode / codex / opencode / prime 是主力 agent，指令文件为手工维护栈——`--apply`/`--rm` 默认跳过它们（状态标 `[primary]`），snippet 迭代只作用于其余 fleet；显式 `--only <id>` 点名才动。
+- **不撒孤儿文件**：未安装的 agent（指令文件父目录不存在）自动跳过并提示，跑过一次 agent 再 apply 即可。
 - ⚠️ **rtk 是指令依赖**：要 agent 真去调 `rtk read/git/...` 而非裸命令。CLI 类、指令跟随好的基本照做；跟随差或不读全局 AGENTS.md 的 agent 无效。caveman 是纯输出风格，跟随率最高。
 
 ## profile —— 多槽位配方
@@ -131,7 +133,7 @@ ccse profiles                 # 列已有 profile
 - `agent.slot = "name"`：`agent` 选 adapter，`slot` 选该 adapter 内字段。
 - profile 里省略的槽位**不动** → 可只切部分 agent。
 
-## adapter 覆盖（38 个）
+## adapter 覆盖（53 个）
 
 **结构化配置**（`--model` 改主槽位 + subagent；`--base-url`/`--api-key` 改对应字段）：
 
@@ -168,6 +170,7 @@ ccse profiles                 # 列已有 profile
 | `swival` | `~/.config/swival/config.toml` | TOML | `model`（裸名，CONFIG_KEYS 平铺键） | `base_url` | `api_key`（字面 key；`[profiles.*]` 不动） |
 | `step` | `~/.stepcode/agent/{settings,models}.json` | JSON | `defaultModel`（`provider/id` 复用当前 provider，无则落 `custom/` + 建条目） | `providers.<pid>.baseUrl`（models.json，api 默认 openai-completions） | `providers.<pid>.apiKey`（models.json 字面 key） |
 | `arkcli` | `~/.arkcli/config.yaml` | YAML | `profiles.<default_profile>.resources.text.default`（CLI `--model` 的默认来源；无 profile 则跳过并提示 init） | `profiles.<name>.base_url` | —（key 在 CLI identity store） |
+| `dsh` | `~/.dsh/cordis.patch.yml` | YAML | `agent-default-model` 条目的 `config.model`（家层 patch，作用于全部 profile 且压过 profile 级 patch；provider 沿用现有，新建时从 profile patch 探测、分歧落 deepseek-official） | —（model-only） | —（llm-* provider 条目管端点） |
 | `nmragent` | `~/NMRagent/backend/.env` | dotenv | `OPENAI_MODEL`（生成主模型；`QUERY_REWRITER_MODEL`/`QUERY_REWRITER_FALLBACK_MODEL` 为独立非跟随槽位） | `OPENAI_BASE_URL`（客户端自剥 `/v1`，Anthropic 兼容 Messages API） | `OPENAI_API_KEY`（行级 KEY=VALUE 重写，注释/顺序保留；改后需重启服务） |
 | `graphpulse` | `~/graphpulse-master/.env.local` | dotenv | `GP_AI_MODEL`（vite 代理默认；`VITE_AI_MODEL` 前端 override 为独立槽位） | `NEWAPI_API_BASE`（文件里有谁写谁；shell 已 export 则写 `~/.zshrc`——vite loadEnv 里 process.env 优先压过 .env 文件） | `NEWAPI_API_KEY`（同左；vite `/api/ai/complete` 代理上游；改后重启 dev server） |
 | `droid` | `~/.factory/settings.json` | JSON | `sessionDefaultSettings.model`（裸名自动解析/新建 `customModels[]` 条目 → `custom:<name>-N` id） | 活动 `customModels[].baseUrl` | 活动 `customModels[].apiKey` |
@@ -180,10 +183,6 @@ ccse profiles                 # 列已有 profile
 | `openclaude` | `~/.openclaude/settings.json` | JSON | `env.ANTHROPIC_MODEL` | `env.ANTHROPIC_BASE_URL` | `env.ANTHROPIC_AUTH_TOKEN` |
 | `openhands` | `~/.openhands/agent_settings.json` | JSON | `llm.model`（litellm slug，如 `openai/...`） | `llm.base_url` | `llm.api_key` |
 | `commandcode` | `~/.commandcode/settings.json` | JSON | `model`（+`featureModels.*` 跟随；云目录 id 或 BYO id） | —（云端 auth / BYO 未实例化） | — |
-| `mmx` | `~/.mmx/config.json` | JSON | `default_text_model` | `base_url`（网关根，写时剥 `/v1`） | `api_key` |
-| `pigo` | `~/.config/pigo/config.toml` | TOML | `model` | `base_url`（同时保证 `protocol = "openai"`） | `api_key` |
-| `penguin` | `~/.penguin/data/default_project/.project_config.toml` | TOML | `default_model.model_id`（+`[[models]]` 注册表条目同步） | `models[...].base_url` | `models[...].api_key` |
-| `aider` | `~/.aider.conf.yml` | YAML | `model`（裸名自动补 `openai/` 前缀走网关） | `openai-api-base` | `api-key`（`provider=key`） |
 | `mcode` | `~/.minimax/config.yaml` | YAML | `defaultModel`（catalog 解析源；BYO 自动 `custom_provider:` 前缀 + 补条目） | 活动 provider `options.baseURL` | 活动 provider `options.apiKey` |
 | `mimo` | `~/.config/mimocode/mimocode.jsonc` | JSONC | `model`（注释保留的外科手术编辑） | `provider.<active>.options.baseURL` | `provider.<active>.options.apiKey` |
 | `mu` | `~/.mu/agent/settings.json` + `models.json` | JSON | `defaultModel`（配 `defaultProvider` 成对解析；`prov/model` 前缀切 provider，自动修悬空 provider + 同步 `enabledModels` 门控） | `providers.<active>.baseUrl` | `providers.<active>.apiKey`（字面 key） |
@@ -194,8 +193,9 @@ ccse profiles                 # 列已有 profile
 |---|---|---|
 | `kimi` | `KIMI_MODEL_NAME` / `KIMI_MODEL_API_KEY` | Kimi Code 模型名走 env provider `__kimi_env__` |
 | `copaw` | `COPAW_MODEL_NAME` / `COPAW_MODEL_API_KEY` | CoPAW 走 NewAPI fallback 的稳定引用 |
-| `nvim` | `NEWAPI_MODEL` / `NEWAPI_BASE_URL` / `NEWAPI_API_KEY` | Neovim minuet.nvim 经 env 读配置 |
 | `fx` | `FX_MODEL` | fx 原生二进制；默认模型在云端 team prefs，env 覆盖 |
+
+`zcode` 为 rules-only（内置 bigmodel plan 无外部模型 override 面，仅 `ccse rules` 注入生效），无配置槽位。
 | `nvim` | `NEWAPI_MODEL` / `NEWAPI_BASE_URL` / `NEWAPI_API_KEY` | minuet.nvim 读 env 变量（见 minuet.lua）；base_url 带/不带 `/v1` 均可（minuet 自行 strip 再拼） |
 
 envrc 适配器只改它声明的那一行 `export VAR=...`（单引号转义，`glm-5.2[1M]` 这类含特殊字符的名字也安全），rc 文件里其它内容一字不动；snapshot/undo 同样覆盖 `~/.zshrc`。
@@ -294,7 +294,7 @@ pipx/uv 装一个 CLI，stdlib（`argparse`/`tomllib`/`json`/`urllib`）为主�
 
 **ROADMAP**
 
-- [x] 45 adapter（claude/codex/opencode/gemini/qwen/cline + codebuddy/pi/openclaw/kilocode/reasonix/grok/forge/hermes/snow/crush/droid/ante/qoder/qodercn/atomcode/amp/muse/agy/trae/devin/swival/step/arkcli/nmragent/graphpulse/memmy/prime/omp/openakita/jcode + openhands/commandcode/mmx/aider/pigo/penguin + kimi/copaw/nvim envrc）
+- [x] 45 adapter（claude/codex/opencode/gemini/qwen/cline + codebuddy/pi/openclaw/kilocode/reasonix/grok/forge/hermes/snow/crush/droid/ante/qoder/qodercn/atomcode/amp/muse/agy/trae/devin/swival/step/arkcli/nmragent/graphpulse/dsh/memmy/prime/omp/openakita/jcode + openhands/commandcode/mmx/aider/pigo/penguin + kimi/copaw/nvim envrc）
 - [x] `--model NAME` 全量一键 + **subagent 跟随**（`--no-follow` 可只换主模型）+ `--only`/`--exclude` + 保前缀 + claude 自动 `[1M]`
 - [x] `--base-url` / `--api-key` 全量一键（env 型写 ~/.zshrc、env_key 解析、codex 字面 api_key）
 - [x] `apply`/`diff` 双模式 + profile 多槽位 + `genprofile` 快照成 profile
@@ -313,7 +313,7 @@ pipx/uv 装一个 CLI，stdlib（`argparse`/`tomllib`/`json`/`urllib`）为主�
 
 <div align="center">
 
-**[快速开始](#tldr)** · **[DeepWiki 文档](https://app.devin.ai/org/xing-ling-ji-zhu/wiki/Tonystarkw12/cc-switch-enhanced?branch=master)** · **[适配列表](#adapter-覆盖38-个)** · **[Releases](https://github.com/Tonystarkw12/cc-switch-enhanced/releases)**
+**[快速开始](#tldr)** · **[DeepWiki 文档](https://app.devin.ai/org/xing-ling-ji-zhu/wiki/Tonystarkw12/cc-switch-enhanced?branch=master)** · **[适配列表](#adapter-覆盖53-个)** · **[Releases](https://github.com/Tonystarkw12/cc-switch-enhanced/releases)**
 
 MIT © Tonystarkw12 · 觉得有用给个 ⭐ · [issue](https://github.com/Tonystarkw12/cc-switch-enhanced/issues) / [PR](https://github.com/Tonystarkw12/cc-switch-enhanced/pulls) 欢迎
 
